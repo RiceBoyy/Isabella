@@ -14,7 +14,7 @@ quietly widening the current one.
 
 ---
 
-## M0 - Charter
+## M0 - Charter ✅
 
 **Goal:** Write down what Isabella is, before any code exists to argue with.
 
@@ -29,7 +29,7 @@ quietly widening the current one.
 
 ---
 
-## M1 - Hermes handshake
+## M1 - Hermes handshake ✅
 
 **Goal:** Isabella talks to Hermes and answers *as Isabella*, not as a generic model.
 
@@ -59,6 +59,10 @@ side, an HTTP call to Hermes, a reply that sounds like her.
 - Killing Hermes produces a clean, useful error - not a stack trace
 
 **Out of scope:** web UI, triggers, sessions, memory, any scheduling.
+
+**Landed 2026-08-23.** Both done-when criteria met; see `HISTORY.md`. Carried into M2:
+the API is unauthenticated on loopback, and replies take 8-90s because qwen3 reasons
+before answering.
 
 ---
 

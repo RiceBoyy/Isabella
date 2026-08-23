@@ -67,18 +67,30 @@ actively developed; when its API shifts, exactly one module should need changing
 
 ## Commands
 
-To be filled in at M1.
-
 ```sh
-uv run isabella serve      # Isabella API
-uv run pytest              # tests
-uv run ruff check .        # lint
-pnpm --dir web dev         # web UI            (M3)
+# 1. Her Hermes gateway must be running first.
+export HERMES_HOME=~/.hermes-isabella
+hermes gateway &                      # port 8643
+
+# 2. Her API.
+uv run uvicorn core.api.app:app --host 127.0.0.1 --port 8000
+
+# 3. Talk to her.
+curl -s -X POST localhost:8000/chat -H 'Content-Type: application/json' \
+  -d '{"message":"who are you?"}'
+
+curl -s localhost:8000/health         # 503 if Hermes is down OR persona drifted
+
+uv run pytest -q
+uv run ruff check .
 ```
 
-Check Hermes is up:
+**Answers take 8-90 seconds.** qwen3 reasons before speaking; simple questions are ~8s and
+identity questions can reach 90s. Not a hang - set client timeouts accordingly.
+
+Stop her gateway by PID, never by name:
 ```sh
-curl -H "Authorization: Bearer $HERMES_API_KEY" http://127.0.0.1:8643/v1/models
+kill "$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.hermes-isabella/gateway.pid")))["pid"])')"
 ```
 
 ## Guardrails
