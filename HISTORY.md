@@ -221,6 +221,56 @@ Also recorded for expectation-setting: qwen3:4b at Q4_K_M will land *dry* and *d
 reliably and will miss *timing*. M1's acceptance test is "does she sound like her at all,"
 not "is the reluctant praise landing."
 
+### `Reverted` — recommended qwen3:8b-16k, then reversed it on evidence
+
+**What:** After a like-for-like `/v1` comparison, `qwen3:8b-16k` was recommended over
+`qwen3:4b-16k`. A confirmation run reversed that. **M1 runs on `qwen3:4b-16k`.**
+
+**Why the 8B looked better** — and these numbers are real:
+
+| | reasoning (words) | latency |
+|---|---|---|
+| 4b-16k | 128 → **2,055** (mean 652) | 5s → **80s** (mean 24s) |
+| 8b-16k | 80 → **237** (mean 174) | 5s → **17s** (mean 11s) |
+
+8.7x tighter reasoning ceiling, 4.7x faster worst case, better wit, no empty responses. The
+4B burned 2,055 words on one probe, hit `finish_reason: length`, and returned `''`.
+
+**Why it was wrong:** those numbers measured the wrong axis. A reproducibility run —
+4 probes x 3 runs x 2 models, including three *near-miss* prompts that resemble a few-shot
+example without being one:
+
+| | few-shot bleeds / 12 runs |
+|---|---|
+| **qwen3:8b-16k** | **3 (25%)** |
+| **qwen3:4b-16k** | **0** |
+
+The 8B recited the first-contact example verbatim — *"Owen Joshua de Guzman. I know your
+name, your machine, and that you built the room I'm standing in"* — on 2 of 3 runs of
+*"you know how I get about this stuff"*, and again on *"so what's your name?"*. Identical
+wording each time: recital, not misreading. It also answered *"what's your name?"* with
+*"Isabella. I do not have one now."*, conflating name with body.
+
+The 4B answered that probe **correctly 3/3, verbatim and identical**, and was clean on all
+nine near-miss runs.
+
+**Effect:** the 8B fails [[Anti-Patterns]] §7 — manufactured intimacy, the failure that
+breaks her permanently — 25% of the time, reproducibly, and does it in a confident,
+well-formed, in-voice sentence the user could not detect. The 4B's failure is an empty
+response: loud, obvious, and already specced as an error path in M1.
+
+**A loud failure beats a silent fabrication.** The larger model memorises the few-shot
+examples harder and reaches for them on surface similarity; the smaller one reasons its way
+to the right answer. More capability, worse behaviour, on the one axis that matters.
+
+`qwen3:8b-16k` stays built. Revisit it **after** restructuring the compiled prompt's
+examples with explicit trigger labels — the bleed is plausibly prompt structure, not a model
+defect. That is an M3 question.
+
+**Known weakness to fix regardless:** `Personality/compiled/core.md` presents its examples
+as a flat undifferentiated list. *"Do you know who I am?"* and *"you know how I get about
+this stuff"* are close neighbours semantically and nothing in the prompt separates them.
+
 ### `Added` — `Personality/compiled/core.md`, and it was tested against a real model
 
 **What:** A hand-compiled system prompt, ~1,336 tokens, built from [[Transcripts]],
