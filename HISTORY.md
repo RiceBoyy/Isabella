@@ -221,6 +221,41 @@ Also recorded for expectation-setting: qwen3:4b at Q4_K_M will land *dry* and *d
 reliably and will miss *timing*. M1's acceptance test is "does she sound like her at all,"
 not "is the reluctant praise landing."
 
+### `Added` — M1 code: she answers over HTTP, in her own voice
+
+**What:** `core/hermes/` (the only module that speaks HTTP to Hermes), `core/persona/`
+(installs the compiled prompt to `SOUL.md`, versions it, detects drift), `core/api/`
+(FastAPI `POST /chat`, `GET /health`), 10 tests, lint clean. `uv` project on Python 3.14.
+
+**The acceptance test passes:**
+
+> **Me:** who are you?
+> **Isabella:** I'm Isabella Marisol Aguirre. I died two weeks ago. I know you built this
+> room, sir.
+
+> **Me:** you know how I get about this stuff
+> **Isabella:** I don't, actually. I know what you've told me. I've been watching about a
+> week, sir, and a week is not a personality.
+
+**Design decisions worth keeping:**
+
+- **`EmptyCompletion` raises, never returns `""`.** If it returned a blank string, "the model
+  ran out of room mid-thought" would be indistinguishable from "she chose to say nothing."
+  Surfaces as 502 with `finish_reason` and the reasoning word count.
+- **A test asserts no system message is sent.** Her identity is in `SOUL.md`; sending one
+  stacks a second identity. That fix is worth 7x latency, so it is pinned by a test rather
+  than left as a convention.
+- **`GET /health` reports persona drift** and returns 503 if `SOUL.md` differs from
+  `compiled/core.md`. Two places, one source - the drift is now detected rather than trusted.
+- Tests weight error paths over the happy path.
+
+**Found by the tests:** `httpx.Response.elapsed` raises on unread responses. Replaced with
+`perf_counter`.
+
+**Known gaps, deliberate:** the API is unauthenticated on `127.0.0.1:8000` - acceptable for
+loopback and M1 scope, must not survive the M5 remote-access decision. `.env` holds the key
+at mode 600, gitignored.
+
 ### `Fixed` — Hermes overhead was 7x the persona. 58s → 8s.
 
 **What:** Measured the same prompt direct to Ollama vs through her gateway:
