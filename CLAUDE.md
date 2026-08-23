@@ -99,10 +99,32 @@ Hermes' own config, never wider** — see `PERMISSIONS.md`. Never set `HERMES_YO
 Hermes job). Failures notify; they never silently retry. Write the run record *before*
 delivering.
 
-**`~/.hermes` is Selene's. Never touch it.** Isabella's instance is
-`~/.hermes-isabella` on port 8643. Editing Selene's `config.yaml`, `SOUL.md`, `.env` or
-`state.db` silently retunes a different AI that is running right now. Always set
-`HERMES_HOME` before any `hermes` command.
+**Her Hermes instance is `~/.hermes-isabella`, on port 8643.** Export
+`HERMES_HOME=~/.hermes-isabella` before any `hermes` command, always. Everything of hers -
+config, state, memory, transcripts - lives there.
+
+```sh
+export HERMES_HOME=~/.hermes-isabella
+hermes gateway            # her gateway
+hermes config get model.default
+```
+
+`HERMES_HOME` redirects **state only**. The program itself is a single shared install at
+`~/.hermes/hermes-agent/`, which the `hermes` wrapper hardcodes - so upgrading Hermes
+upgrades it for every instance on this machine.
+
+**Scope process commands by PID, never by name.** Other Hermes gateways run on this machine
+and `pkill -f "hermes gateway"` kills all of them. To stop hers:
+
+```sh
+kill "$(python3 -c 'import json,os;print(json.load(open(os.path.expanduser("~/.hermes-isabella/gateway.pid")))["pid"])')"
+```
+
+**Her persona lives in `~/.hermes-isabella/SOUL.md`**, not in a system message. It is a copy
+of `Personality/compiled/core.md`. Regenerate the compiled prompt and you must copy it across
+- otherwise Hermes serves a stale identity. Requests to `/v1` send **no system message**;
+sending one stacks a second identity on top of SOUL.md and the model burns reasoning
+reconciling them.
 
 **Data.** Isabella stores no message content - transcripts live in
 `~/.hermes-isabella/state.db`.

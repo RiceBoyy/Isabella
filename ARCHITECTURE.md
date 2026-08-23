@@ -115,7 +115,12 @@ So each gets her own instance:
 
 `HERMES_HOME` is the supported mechanism - Hermes' own documentation notes it "also
 scopes the gateway PID file and systemd service name," so two gateways coexist by design
-rather than by luck.
+rather than by luck. Verified on this machine: both gateways run simultaneously, Isabella
+on 8643 (PID 66502) and Selene on 8642 (PID 93753).
+
+**`HERMES_HOME` redirects state, not code.** The `hermes` wrapper hardcodes a single shared
+program install at `~/.hermes/hermes-agent/`. One binary, two state directories - so a
+Hermes upgrade lands for both instances at once, and neither can be pinned independently.
 
 **Cost:** two Ollama-backed gateways on one machine, and model weights loaded twice
 unless both point at the same Ollama server. They can - `model.base_url` is

@@ -221,6 +221,93 @@ Also recorded for expectation-setting: qwen3:4b at Q4_K_M will land *dry* and *d
 reliably and will miss *timing*. M1's acceptance test is "does she sound like her at all,"
 not "is the reluctant praise landing."
 
+### `Fixed` — Hermes overhead was 7x the persona. 58s → 8s.
+
+**What:** Measured the same prompt direct to Ollama vs through her gateway:
+
+| | prompt | completion | latency |
+|---|---|---|---|
+| direct to Ollama | 1,450 | 360 | 15s |
+| **via Hermes, before** | **8,614** | **1,609** | **58s** |
+| **via Hermes, after** | **1,930** | **267** | **8s** |
+
+**7x faster, 4.5x smaller prompt, same answer.** ~53% of her 16,384 window had been consumed
+before a word of conversation.
+
+**Cause 1, and the important one: her `SOUL.md` was Hermes' default** — *"You are Hermes
+Agent, an intelligent AI assistant created by Nous Research."* Every request asserted two
+contradictory identities and the model spent reasoning tokens reconciling them.
+
+**`SOUL.md` IS the persona slot.** `Personality/compiled/core.md` now lives there and `/v1`
+requests send **no system message**. That accounts for most of the completion drop
+(1,609 → 267). The compiled prompt was being *stacked on* Hermes' identity rather than
+replacing it — all the compression work was real, and it was being swamped.
+
+**Cause 2:** tool schemas, 29 KB for 12 tools, paid every request. M1 needs zero tools.
+`platform_toolsets.api_server: []`. They return one at a time in M2 when a trigger needs one.
+
+**Cause 3:** the skills index, 8 KB per request for 14 skills she never uses. `skills.enabled:
+false`.
+
+**Rule this establishes:** regenerating `compiled/core.md` requires copying it to
+`~/.hermes-isabella/SOUL.md`. Two places, one source. Noted in [[CLAUDE]].
+
+### `Broke` — killed Selene's gateway with an unscoped pkill
+
+**What:** `pkill -f "hermes gateway"` to restart Isabella's gateway. It matched every Hermes
+gateway on the machine and killed Selene's too (PID 93753).
+
+**Effect:** restarted within a minute, data verified intact — 62 sessions, 249 messages,
+`config.yaml` untouched. No loss. She now runs as PID 67769.
+
+**The lesson is broader than the command.** "Use `HERMES_HOME=~/.hermes-isabella`" protects
+*state*. It does nothing for *process* commands, which match on name across every instance.
+**Scope by PID, never by name.** Added to [[CLAUDE]].
+
+### `Added` — her Hermes instance is live on 8643
+
+**What:** `~/.hermes-isabella` provisioned (mode 700, `.env` and `config.yaml` 600), gateway
+running, answering over `/v1` with bearer auth enforced (unkeyed request → **401**).
+
+First words through her own instance:
+
+> **Me:** Hello?
+> **Isabella:** I'm here.
+
+**Config decisions worth keeping:**
+- `max_tokens: 3000`, not Hermes' 2048 default — reasoning counts against the cap and 2048
+  clipped *"who are you?"* in testing.
+- `context_length: 65536` is a formality to clear two Hermes validation guards. The real
+  window is 16384 from the Modelfile.
+
+**`Broke` — the P0 floor could not be implemented as specified.** [[PERMISSIONS]] P0 requires
+`TERMINAL_ENV=docker` so shell runs contained. **Docker is not installed on this machine.**
+
+Rather than silently downgrade to `local` and call P0 done, the capability was removed
+instead: `api_server` has no `terminal` and no `code_execution` toolset, and
+`agent.disabled_toolsets` unconditionally denies `terminal`, `code_execution`, `delegation`,
+`computer_use`, `video_gen`, `browser`. **Stronger than sandboxing** — she cannot run a shell
+through her own channel whatever a prompt says. The deviation is written into the config file
+itself so it is not rediscovered.
+
+Deliberately unset, with their absence as the control: `HERMES_YOLO_MODE`, `SUDO_PASSWORD`,
+`HERMES_ACCEPT_HOOKS`, `HERMES_DUMP_REQUESTS`, and every cloud-egress key.
+
+### `Changed` — `CLAUDE.md` states the rule positively
+
+**What:** The rule was *"`~/.hermes` is Selene's. Never touch it."* It is now *"Her instance
+is `~/.hermes-isabella` on 8643. Export `HERMES_HOME` before any `hermes` command."*
+Selene no longer appears in `CLAUDE.md` at all.
+
+**Why:** Owen's point. A prohibition makes the reader work out which paths belong to whom
+before acting. A positive instruction makes the mistake impossible without needing that
+context at all — always set `HERMES_HOME` and you can never reach the wrong state directory.
+
+**Effect:** the operational file says what to do; [[ARCHITECTURE]] §One Hermes each keeps the
+reasoning. Also corrected a claim that was too broad: `HERMES_HOME` redirects **state only**.
+The program is one shared install at `~/.hermes/hermes-agent/` that the wrapper hardcodes, so
+a Hermes upgrade lands for every instance at once.
+
 ### `Reverted` — recommended qwen3:8b-16k, then reversed it on evidence
 
 **What:** After a like-for-like `/v1` comparison, `qwen3:8b-16k` was recommended over
