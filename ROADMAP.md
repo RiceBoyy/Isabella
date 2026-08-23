@@ -1,0 +1,174 @@
+# Roadmap
+
+## The sequencing rule
+
+**Each milestone must be usable on its own before the next one starts.**
+
+Not "compiles." Not "tested." *Used* - as in I actually got value from it in real life
+before the next milestone begins. Four ambitions were named at charter time (life ops,
+second brain, dev copilot, proactive daemon). Building all four in parallel produces
+none of them.
+
+If a request belongs to a later milestone, it waits. Say so out loud rather than
+quietly widening the current one.
+
+---
+
+## M0 - Charter
+
+**Goal:** Write down what Isabella is, before any code exists to argue with.
+
+**Done when**
+- `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CLAUDE.md` exist and agree with each other
+- The Isabella/Hermes ownership boundary is unambiguous
+- Her character exists: `Personality/` (19 files), `BIOGRAPHY.md`, `ORIGIN.md`
+- A compiled runtime prompt exists and has been **probed against a real model**
+- Repo has its first commit
+
+**Out of scope:** all code, dependency installs, directory scaffolding.
+
+---
+
+## M1 - Hermes handshake
+
+**Goal:** Isabella talks to Hermes and answers *as Isabella*, not as a generic model.
+
+The smallest possible thing that proves the whole premise: a persona layer on Isabella's
+side, an HTTP call to Hermes, a reply that sounds like her.
+
+**Build**
+- `core/hermes/` - typed client. Bearer auth, base URL from env, one place all Hermes
+  calls funnel through. `POST /v1/chat/completions` and `GET /health` only.
+- `core/persona/` - load `Personality/compiled/core.md`. **Do not concatenate the corpus**;
+  it is ~27,000 tokens against a 16,384 window (see `HISTORY.md`).
+- Model name, base URL and key from env. `qwen3:4b-16k` to start - a `-16k` Modelfile build,
+  never a stock model, because Ollama's `/v1` ignores `num_ctx` and silently gives you 4096.
+- **Handle empty `content`.** qwen3 reasons before answering; exhausting `max_tokens`
+  mid-thought returns empty content with `finish_reason: length`. A real error path, not a
+  crash.
+- `core/api/` - FastAPI with `POST /chat` and `GET /health`.
+- SQLite bootstrap: `persona_versions` table.
+- `.env.example`, `uv` project, `ruff`, `pytest`.
+
+**Done when**
+- **Voice test, not a plumbing test:** she sounds like `Personality/`, draws on
+  `BIOGRAPHY.md`, and claims no history she doesn't have
+- `curl -X POST localhost:8000/chat -d '{"message":"who are you?"}'` returns a reply in
+  Isabella's voice
+- Isabella's `/health` reports whether Hermes is reachable
+- Killing Hermes produces a clean, useful error - not a stack trace
+
+**Out of scope:** web UI, triggers, sessions, memory, any scheduling.
+
+---
+
+## M2 - Daily briefing daemon ⭐
+
+**The first slice that earns its keep.** Everything before this is plumbing.
+
+**Goal:** She wakes up on her own, reads my calendar and email, and sends me a briefing
+before I ask. Autonomy, end to end, once.
+
+**Prerequisite: the L1 permission floor.** Before anything fires unattended, set Hermes'
+env floor and `platform_toolsets` by hand - `TERMINAL_ENV=docker`, `HERMES_MAX_ITERATIONS`,
+`HERMES_WRITE_SAFE_ROOT`, and no `HERMES_YOLO_MODE`. This is P0 in `PERMISSIONS.md`, and
+the briefing must not be the thing that discovers the floor is missing.
+
+**Build**
+- `triggers/daily-briefing.yaml` - the trigger schema from `ARCHITECTURE.md`, made real
+  for exactly one trigger.
+- `core/triggers/` - parse the YAML, reconcile it into a Hermes job via `POST /api/jobs`.
+  Idempotent: running reconcile twice changes nothing.
+- Briefing composition: the prompt, the skills (`calendar`, `email`), what belongs in a
+  briefing and what doesn't.
+- Delivery through Telegram via Hermes' connector - chosen because it needs no inbound
+  network, so the remote-access decision stays deferred.
+- Guardrails: `max_runs_per_day`, timeout, `on_failure: notify`.
+- `runs` table - every execution recorded before delivery.
+
+**Done when**
+- I wake up on a real morning to a briefing I did not ask for
+- It's good enough that I'd miss it if it stopped
+- `POST /api/jobs/{id}/pause` kills it instantly, and I've verified that
+
+**Out of scope:** web UI, more than one trigger, generalized trigger engine, voice.
+
+**The honest checkpoint:** if the briefing isn't useful, the fix is the *prompt and the
+composition logic*, not more architecture. Iterate here before building anything else.
+
+---
+
+## M3 - Web UI
+
+**Goal:** A place to talk to her and see what she's been doing.
+
+**Build**
+- `web/` - React + Vite, `pnpm`. Talks only to Isabella's API; never holds the Hermes key.
+- Chat over `POST /chat`, streaming via Hermes' Runs API (`/v1/runs/{id}/events`, SSE).
+- Trigger list: view, enable/disable, run-now.
+- Briefing history from the `runs` table.
+- Stable `X-Hermes-Session-Key` per surface so memory scopes correctly.
+
+**Done when** I use the web UI in preference to the terminal, and can pause a trigger
+from it.
+
+**Out of scope:** auth (loopback only), mobile layout, remote access.
+
+---
+
+## M4 - Trigger engine generalized
+
+**Goal:** Adding a new automation means writing YAML, not writing code.
+
+**Build**
+- Full trigger schema: `schedule`, `webhook`, `event`, `manual`; conditions; all three
+  action types.
+- Hot reload - file change reconciles without a restart.
+- `POST /triggers/{id}/fire` webhook endpoint, so external systems (n8n, Zapier,
+  GitHub Actions, Home Assistant) can call her.
+- Full reconciliation: create, update, delete, orphan cleanup.
+- 2–3 real triggers beyond the briefing, driven by actual need.
+
+**Done when** I add a useful automation end-to-end without touching Python.
+
+---
+
+## M5 - Portability
+
+**Goal:** She runs wherever I put her.
+
+**Build**
+- `docker-compose.yml` - Isabella API, web UI, Hermes on one network.
+- ARM64 build (Pi, Apple silicon). All config via environment.
+- Documented per-host setup and what degrades where.
+- **Decide remote access.** Tailscale is the standing recommendation; see
+  `ARCHITECTURE.md`. This milestone is where the decision gets made, not deferred again.
+
+**Done when** she's running on a second device with the same state and the same triggers.
+
+---
+
+## M6 - Voice and more channels
+
+**Goal:** Talk to her out loud; reach her wherever I already am.
+
+Voice and additional connectors (Slack, iMessage on macOS, email) come from Hermes.
+This milestone is configuration and persona adaptation per surface - she should be terse
+out loud and fuller in writing - not new infrastructure.
+
+**Done when** I've had a useful spoken conversation with her.
+
+---
+
+## Deferred - deliberately not now
+
+Each of these is real and wanted. None is next.
+
+| | Why it waits |
+|---|---|
+| **Second-brain ingest** | Needs M4's event triggers and a clear answer on where knowledge lives given that memory is Hermes'. Genuinely unsolved - don't start it early. |
+| **Dev copilot / repo watching** | Wants M4 webhooks. GitHub Actions → `POST /triggers/{id}/fire` is nearly free once that exists. |
+| **Self-hosted n8n** | The native trigger system was chosen over it. Revisit only if a specific integration is painful to build and n8n already has it - and then only behind the webhook endpoint. |
+| **Multi-user / sharing** | Audience of one. Not a goal. |
+| **Full `permit()` gate** | `PERMISSIONS.md` P1-P6 runs alongside these milestones on its own phasing. Only P0 - the Hermes-side floor - blocks M2. |
+| **Sub-agents** | Hermes has them. Use them when a real task needs delegation, not before. |
