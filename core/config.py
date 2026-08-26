@@ -25,6 +25,18 @@ class Settings(BaseSettings):
     request_timeout_s: float = 300.0
 
     db_path: Path = REPO_ROOT / "data" / "isabella.db"
+    triggers_path: Path = REPO_ROOT / "triggers"
+
+    # Pre-run scripts. The repo is the source of truth; Hermes only ever runs
+    # the installed copy, so the two are compared rather than assumed equal.
+    scripts_path: Path = REPO_ROOT / "scripts"
+    hermes_scripts_path: Path = Path.home() / ".hermes-isabella" / "scripts"
+
+    # Hermes resolves ONE timezone for the whole instance - there is no
+    # per-job timezone (hermes_time.py). A trigger declaring a timezone is
+    # asserting this value; reconcile refuses on mismatch rather than
+    # firing at the wrong hour every day.
+    hermes_timezone: str | None = None
     persona_path: Path = REPO_ROOT / "Personality" / "compiled" / "core.md"
 
     # Where Hermes reads her identity from. The persona is installed here, not

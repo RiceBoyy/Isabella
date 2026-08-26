@@ -59,6 +59,7 @@ core/               Python
 web/                React + Vite UI
 policy/             permissions.json - the action policy, git-versioned
 triggers/           YAML trigger definitions - source of truth
+scripts/            pre-run scripts - source of truth, installed to HERMES_HOME/scripts/
 data/               SQLite (gitignored)
 ```
 
@@ -83,7 +84,18 @@ curl -s localhost:8000/health         # 503 if Hermes is down OR persona drifted
 
 uv run pytest -q
 uv run ruff check .
+
+# 4. Triggers. The engine reconciles triggers/*.yaml into Hermes jobs - it never
+#    schedules anything itself.
+curl -s -X POST 'localhost:8000/triggers/reconcile?dry_run=true'   # show the plan
+curl -s -X POST localhost:8000/triggers/reconcile                  # apply it
+curl -s localhost:8000/triggers                                    # incl. next_run_at
+curl -s -X POST localhost:8000/triggers/daily-briefing/pause       # the kill switch
+curl -s localhost:8000/runs
 ```
+
+A pause **outranks the YAML** - reconcile will not turn a paused job back on. To restart
+it, `POST .../resume`. `enabled: false` in the file deletes the job outright.
 
 **Answers take 8-90 seconds.** qwen3 reasons before speaking; simple questions are ~8s and
 identity questions can reach 90s. Not a hang - set client timeouts accordingly.
@@ -101,9 +113,9 @@ traffic goes to Isabella's API, which holds it server-side.
 
 **Permissions.** Every path that reaches Hermes with tools enabled goes through
 `permit()` (`core/policy/`). Never reimplement the check locally. The policy lives in
-`policy/permissions.json` — git-versioned, never in `data/`. It fails closed: a missing or
+`policy/permissions.json` - git-versioned, never in `data/`. It fails closed: a missing or
 unparseable policy denies everything. **Isabella's policy may only ever be narrower than
-Hermes' own config, never wider** — see `PERMISSIONS.md`. Never set `HERMES_YOLO_MODE`,
+Hermes' own config, never wider** - see `PERMISSIONS.md`. Never set `HERMES_YOLO_MODE`,
 `SUDO_PASSWORD`, or `HERMES_ACCEPT_HOOKS`.
 
 **Autonomy.** Every trigger that can act unprompted must have a rate limit
@@ -159,14 +171,14 @@ easy to conflate and must not be:
    she is unsentimental about it. Do not write her as haunted, and do not write her as
    breezy about it either.
 
-**The runtime prompt is `Personality/compiled/core.md`** — derived from `Personality/`, not
+**The runtime prompt is `Personality/compiled/core.md`** - derived from `Personality/`, not
 a substitute for it. Change a source file, regenerate and re-probe. Never edit only one.
 
-**qwen3 gotchas, verified — see `HISTORY.md`:**
+**qwen3 gotchas, verified - see `HISTORY.md`:**
 - `think: false` does NOT disable reasoning; it moves it into `content`. Use `think: true`.
 - Reasoning counts against `max_tokens`. Starved, `content` comes back **empty** with
   `finish_reason: length`. Treat empty content as a real error, not a transport failure.
-- **Ollama's `/v1` ignores `num_ctx`** — the Modelfile is the only channel. Use a `-16k`
+- **Ollama's `/v1` ignores `num_ctx`** - the Modelfile is the only channel. Use a `-16k`
   model (`qwen3:4b-16k`, `qwen3:8b-16k`), never a stock one, or you silently get 4096.
 - Model name must come from env so swapping is config, not code.
 
@@ -189,7 +201,36 @@ If a request belongs to a later milestone, say so plainly and offer the version 
 fits the current one. Don't quietly widen scope to be helpful - that's exactly how the
 four parallel ambitions in the charter turn into zero working ones.
 
-Current milestone: **M0 → M1** (charter written, Hermes handshake next).
+Current milestone: **M2** (charter and Hermes handshake landed; the daily briefing is next).
+The trigger engine is built and the briefing runs end to end - cron fires a pre-run script,
+its output is injected as prompt context, and a model with **no toolsets** composes the
+briefing. What is missing is Google OAuth credentials, so today she correctly reports the
+blind spot instead of inventing a day. See `HISTORY.md`.
+
+**Calendar and email are pre-fetched, never tool calls.** `action.script` names a script;
+Hermes injects its stdout into the prompt. `platform_toolsets.cron` is `[]` and must stay
+that way - the 07:00 path does not pass through `permit()`. If a trigger needs new data,
+extend the script; do not grant a toolset.
+
+**Pre-run scripts live in `scripts/` and are installed to `~/.hermes-isabella/scripts/`.**
+The repo is the source of truth; Hermes only ever runs the installed copy. Same trap as
+`SOUL.md` - edit one, forget the other, and the briefing is built by unreviewed code. Copy
+across after every change:
+```sh
+cp scripts/briefing_fetch.py ~/.hermes-isabella/scripts/
+```
+`GET /triggers` reports `script_install.drifted` when the two differ, and a test fails.
+The script must never exit non-zero or print nothing: a model with no tools and an empty
+context invents a plausible day. Every failure prints an explicit `UNAVAILABLE` line.
+
+**A script trigger has to be created once by hand** - `POST /api/jobs` accepts neither
+`script` nor `no_agent`. Reconcile refuses and prints the `hermes cron create` to run. After
+that, everything else is reconciled from the YAML.
+
+**Run `hermes` via its venv**, or it cannot import `yaml`:
+```sh
+~/.hermes/hermes-agent/venv/bin/python ~/.hermes/hermes-agent/hermes cron list
+```
 
 ## Docs
 

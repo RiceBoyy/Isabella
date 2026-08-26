@@ -100,6 +100,36 @@ the briefing must not be the thing that discovers the floor is missing.
 **The honest checkpoint:** if the briefing isn't useful, the fix is the *prompt and the
 composition logic*, not more architecture. Iterate here before building anything else.
 
+**Status 2026-08-26 - the pipeline runs end to end; only the credentials are missing.**
+Fired by hand, the whole chain works: cron -> `briefing_fetch.py` -> stdout injected as
+prompt context -> a model with **zero** toolsets writes the briefing -> the run lands in
+`runs` with `outcome: ok`. Her output was *"Sir. No calendar or unread emails accessible -
+authentication required for google-workspace... You're forgetting the google-workspace skill
+needs authorising."* That is the correct briefing for a morning with no credentials: she
+reported the blind spot rather than inventing a day.
+
+Resolved since: **timezone** is `Europe/Copenhagen` on both sides, and **execution** is
+settled by pre-fetching rather than granting toolsets (`platform_toolsets.cron: []`).
+Outstanding and deliberately deferred: **Google authorisation** (a consent flow, not a
+file - see `ARCHITECTURE.md` §Open decision) and **delivery**, held at `local` by decision.
+The done-when criteria are unchanged and none is met yet - nobody has woken up to a
+briefing. Until the token exists she runs every weekday and reports the blind spot, which
+is the correct behaviour rather than a broken one.
+
+**Earlier status, 2026-08-23 - engine built, briefing blocked.** `core/triggers/` reconciles
+`triggers/daily-briefing.yaml` into Hermes job `isabella:daily-briefing`; idempotency,
+pause and resume are verified against the live gateway. The `runs` table records manual
+fires. Three things still stand between this and a briefing, none of them code:
+
+| | |
+|---|---|
+| Google OAuth | **Deferred 2026-08-26.** Not a missing file - a flow: pick account and scopes, consent in a browser, redirect, exchange, store the refresh token. `setup.py` does this from a terminal and is likely enough for an audience of one; a "Connect Google" button is M3 work. Decide the *scopes* first - they become her real ceiling for Google. See `ARCHITECTURE.md` §Open decision |
+| ~~Execution for the cron path~~ | **Resolved 2026-08-26** by pre-fetching: a script gathers the data, the model gets no tools at all |
+| ~~Timezone~~ | **Resolved 2026-08-26**: `Europe/Copenhagen`, set explicitly on both sides |
+
+Telegram is unconfigured, so delivery is `local` - the fourth thing, and the one that
+decides whether a briefing reaches him at all. The job is **paused** meanwhile.
+
 ---
 
 ## M3 - Web UI

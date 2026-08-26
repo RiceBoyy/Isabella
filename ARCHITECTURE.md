@@ -180,32 +180,33 @@ removed. Reconciliation is idempotent - running it twice changes nothing.
 ### Worked example - the daily briefing
 
 ```yaml
-# triggers/daily-briefing.yaml
+# triggers/daily-briefing.yaml - the real file, not a sketch
 id: daily-briefing
 enabled: true
 
 trigger:
   type: schedule
   cron: "0 7 * * *"
-  timezone: Asia/Manila
+  timezone: Asia/Manila     # an assertion about her Hermes instance - see below
 
 condition:
   weekdays: [mon, tue, wed, thu, fri]
 
 action:
   type: prompt
-  persona: isabella/core
-  skills: [calendar, email]
+  skills: []                # no skills, and no toolsets either
+  script: briefing_fetch.py # runs first; its stdout becomes prompt context
   prompt: |
-    Good morning. Read my calendar for today and my unread email from the last
-    12 hours. Give me a briefing:
+    The script output above is your calendar and unread email. It is the only
+    source you have - you have no tools and cannot look anything up.
+    Brief me from it:
       1. What's on today, in order, with anything that needs prep called out.
       2. Email that actually needs me - not newsletters, not receipts.
       3. One thing you think I'm forgetting.
     Be direct. If it's a quiet day, say so in one line and stop.
 
 deliver:
-  channel: telegram
+  channel: local            # telegram once the connector is configured
 
 guardrails:
   max_runs_per_day: 1
@@ -213,8 +214,64 @@ guardrails:
   on_failure: notify   # tell me it broke; never silently skip
 ```
 
-`skills`, `prompt`, `schedule`, `provider` and delivery target map onto the job-creation
-payload Hermes' `POST /api/jobs` accepts (same shape as `hermes cron`).
+There is no `persona:` key. Her identity is installed once at
+`~/.hermes-isabella/SOUL.md` and applies to every surface including cron; naming it
+per-trigger would stack a second identity on top of it.
+
+The schema is strict (`extra="forbid"`): an unknown key is a startup error. A trigger that
+acts unprompted is the wrong place to be forgiving about spelling - `max_runs` instead of
+`max_runs_per_day` must not quietly mean *no limit*.
+
+**What the reconciler has to absorb**, all verified against Hermes 0.20.4:
+
+| Hermes' behaviour | What the engine does |
+|---|---|
+| `POST /api/jobs` takes only `name`, `schedule`, `prompt`, `deliver`, `skills`, `repeat` - `model`, `enabled_toolsets` and `workdir` are dropped silently | The client filters to what lands, so a dropped field can't read as an applied one. **A job cannot carry its own toolset restriction over HTTP** - `platform_toolsets` is the only lever |
+| `schedule` is sent as a string, returned as `{kind, expr, display}` | Compare against `expr`, or every reconcile PATCHes forever |
+| `GET /api/jobs` **hides disabled jobs** unless `include_disabled=true` | Always ask for them. Otherwise a paused job looks missing and gets duplicated - unpaused |
+| Cron fields must match `^[\d\*\-,/]+$` before croniter sees them | `condition.weekdays` compiles to `1,2,3,4,5`, never `mon-fri`. Folding it into the cron also means a skipped day never wakes the model |
+| Job names are not unique | Reconcile groups by name and deletes duplicates, oldest wins |
+| **One timezone per instance** - no per-job timezone | `timezone:` is checked against `HERMES_TIMEZONE` and refuses on mismatch, rather than firing hours off every day |
+| `script` and `no_agent` are absent from both POST and PATCH | Reconcile refuses to create a script trigger and returns the `hermes cron create` command; drift is reported, not repaired |
+| Unset `platform_toolsets` for a platform means **thirteen** default toolsets, not none | `cron: []` explicitly. The unattended path was the widest surface in the system until this was checked |
+
+### Pre-fetched context - facts without tools
+
+The briefing needs the calendar and the inbox. Those are not native Hermes tools; they come
+from a skill that shells out, which needs `code_execution` or `terminal` - both removed by
+[PERMISSIONS.md](PERMISSIONS.md) P0, with no Docker on this machine to sandbox them.
+
+So the data is fetched **before** the model runs. `action.script` names a script under
+`HERMES_HOME/scripts/`; Hermes runs it each tick and injects its stdout into the prompt as
+`## Script Output`. The model composes the briefing from that and has **no tools at all**
+(`platform_toolsets.cron: []`).
+
+```
+cron tick -> briefing_fetch.py -> stdout injected -> model (zero tools) -> prose -> deliver
+```
+
+The distinction that makes this safe: the script is code written and reviewed once, sitting
+in a directory Hermes containment-checks. Granting the toolset instead would mean *the model
+composing execution at runtime*, unattended, outside `permit()`. Same data, entirely
+different blast radius.
+
+Two consequences, neither of them optional:
+
+- **The repo owns the script.** `scripts/` here is the source; Hermes runs the copy in
+  `HERMES_HOME/scripts/`. `GET /triggers` compares them and reports `script_install.drifted`,
+  because this is exactly the `SOUL.md` failure in a different directory.
+- **The script must fail loudly.** A model with no tools and an empty context invents a
+  plausible day. Every failure prints an explicit `UNAVAILABLE` line, and the prompt is
+  told an invented meeting is worse than an admitted blind spot.
+- **The job cannot be created over HTTP.** `POST /api/jobs` takes neither `script` nor
+  `no_agent`. Reconcile refuses and returns the `hermes cron create` command to run once;
+  after that it manages schedule, prompt, delivery and the kill switch as normal. Script
+  drift is reported, never repaired - PATCH cannot fix it either.
+
+`enabled: false` deletes the job; `POST /triggers/{id}/pause` stops it at Hermes and
+**outranks the file** until someone resumes it - a kill switch that lasted only until the
+next reconcile would not be one. Other edits still reach a paused job: pause freezes
+*whether* it runs, not *what* it would do.
 
 ### Guardrails are not optional
 
@@ -258,7 +315,7 @@ SQLite at `data/isabella.db`. Isabella stores only what *she* owns:
 | Table | Holds |
 |---|---|
 | `triggers` | Parsed definitions + the Hermes `job_id` they reconcile to |
-| `runs` | Execution history: when, outcome, what was delivered |
+| `runs` | Execution history: when, outcome, why it failed. Hermes' cron fires without Isabella in the path, so she **pulls** its execution records in rather than being told - keyed on Hermes' execution id, which is what makes the sync idempotent. Her row is an index into Hermes' ledger, never a second copy of it |
 | `persona_versions` | Versioned identity, with the ability to roll back |
 | `projects` | The repos and areas of life she tracks |
 | `decisions` | Every permission verdict - allow, ask and deny alike |
@@ -293,6 +350,40 @@ Capabilities degrade by host, and that's expected:
 | VPS | Access to anything on the home network |
 
 ---
+
+## Open decision - how Google authorisation actually happens
+
+The briefing needs a Google token. Getting one is **not** a missing file; it is a flow
+nobody has designed yet:
+
+```
+Owen picks which Google account and which scopes (Calendar? Gmail? both?)
+  -> Google's consent screen, in a browser
+  -> redirect back with a code
+  -> exchange for a refresh token
+  -> store it where briefing_fetch.py can read it
+```
+
+The skill ships `scripts/setup.py`, which drives this from a terminal and is enough for one
+person once. That is the cheap path and it is probably the right one for M2 - **audience of
+one**, and a consent screen he clicks through himself is not worth a redirect handler.
+
+What makes it a real decision rather than a chore:
+
+- **A refresh token is a standing grant.** It reaches the calendar and the mailbox until it
+  is revoked, and it will sit on disk next to a process that acts unprompted at 07:00. That
+  belongs in [PERMISSIONS.md](PERMISSIONS.md)'s blast-radius thinking, not in a setup step.
+- **Scopes are the actual permission boundary.** Read-only Calendar and read-only Gmail are
+  a different thing from the send and delete scopes the skill can request. Isabella's policy
+  may only ever be *narrower* - so the scopes granted here become her real ceiling for
+  Google, above anything `permit()` says.
+- **M3 changes the calculus.** Once the web UI exists there is somewhere to put a proper
+  "Connect Google" button and a redirect endpoint. Building that now would be M3 work done
+  early, which is exactly what the sequencing rule forbids.
+
+**Deferred deliberately, 2026-08-26.** Until it is resolved the briefing runs and reports
+the gap honestly - which is the correct behaviour, not a broken state. When it is picked up:
+decide the scopes first, then the flow.
 
 ## Open decision - remote access
 

@@ -13,6 +13,19 @@ class HermesAuthError(HermesError):
     """Rejected. API_SERVER_KEY is wrong or missing - it is required on loopback."""
 
 
+class JobRejected(HermesError):
+    """Hermes refused a job write. The payload was wrong, not the transport.
+
+    Carries the status because the useful ones are distinct: 400 is a bad
+    payload, 424 means the job was saved but the scheduler never registered it
+    - a partial failure that looks like success if you only check for 200.
+    """
+
+    def __init__(self, status: int, detail: str) -> None:
+        self.status = status
+        super().__init__(f"Hermes rejected the job (HTTP {status}): {detail}")
+
+
 class EmptyCompletion(HermesError):
     """Hermes returned success with no content.
 
