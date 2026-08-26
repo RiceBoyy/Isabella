@@ -1,0 +1,67 @@
+# The first thing she does unprompted.
+#
+# This file is the source of truth. The engine reconciles it into a Hermes cron
+# job; it never schedules anything itself. Edit here, reconcile, and Hermes'
+# scheduler picks up the change.
+#
+# Kill switches, in increasing order of severity:
+#   enabled: false here      - removes the job at the next reconcile
+#   POST /triggers/daily-briefing/pause  - stops it at Hermes, instantly
+
+id: daily-briefing
+enabled: true
+
+trigger:
+  type: schedule
+  cron: "0 7 * * *"
+  # Must match her Hermes instance: Hermes resolves ONE timezone per instance
+  # (HERMES_TIMEZONE, then config.yaml, then system local) and has no per-job
+  # override. Reconcile refuses on mismatch rather than firing hours off.
+  timezone: Europe/Copenhagen
+
+condition:
+  weekdays: [mon, tue, wed, thu, fri]
+
+action:
+  type: prompt
+
+  # No skills, and no toolsets either (platform_toolsets.cron: []). The facts
+  # arrive as PRE-FETCHED CONTEXT: this script runs first and its stdout is
+  # injected into the prompt. Data in, prose out - the model composes the
+  # briefing and never calls a tool.
+  #
+  # Decided 2026-08-23. The unattended 07:00 path does not pass through
+  # permit(), so the less it can do, the better. See ARCHITECTURE.md.
+  skills: []
+  script: briefing_fetch.py
+
+  prompt: |
+    The script output above is your calendar and unread email. It is the only
+    source you have - you have no tools and cannot look anything up.
+    Brief me from it:
+
+      1. What's on today, in order. Call out anything that needs prep before it
+         starts.
+      2. Email that actually needs me. Not newsletters, not receipts, not
+         notifications - things where nothing happens until I do something.
+      3. One thing you think I'm forgetting.
+
+    Be direct and keep it short enough to read on a phone. If it's a quiet day,
+    say so in one line and stop - do not pad it out.
+
+    Do not open with a greeting that assumes how I slept or what kind of night
+    I had. You don't know.
+
+    If a section says UNAVAILABLE, say plainly that you could not read it and
+    what it was. Never fill the gap with a guess - an invented meeting is worse
+    than an admitted blind spot.
+
+# "local" writes the output where Hermes can see it and nothing gets sent.
+# Switch to telegram once the connector is configured - see HISTORY.md.
+deliver:
+  channel: local
+
+guardrails:
+  max_runs_per_day: 1
+  timeout_seconds: 180
+  on_failure: notify

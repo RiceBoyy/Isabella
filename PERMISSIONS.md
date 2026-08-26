@@ -94,6 +94,27 @@ the policy so *"never claim a capability you don't have"* stops being a rule the
 remember and becomes a fact about the text it was given. Same principle, one level lower:
 **prose becomes enforcement; policy becomes configuration.**
 
+### Correction, 2026-08-26: the floor had a hole in it, and it was the cron path
+
+P0 was written against the surface being built - Isabella's API - and set
+`platform_toolsets.api_server: []`. It never named `cron`. An unset platform does **not**
+mean no toolsets; it means the platform default, which here was **thirteen**: `file`, `web`,
+`cronjob`, `memory`, `skills`, `kanban`, `todo`, `tts`, `vision`, `image_gen`, `bfl`,
+`clarify`, `session_search`.
+
+So the one surface this document identifies as **ungated** - the cron job that fires at 07:00
+whether or not Isabella is running, with no `permit()` anywhere in its path - was also the
+one with the most capability. It had `file` (read and rewrite the filesystem) and `cronjob`
+(a scheduled job that can create scheduled jobs).
+
+Now `cron: []`. The lesson generalises past this instance: **an unconfigured platform is not
+a closed one.** Every platform that can reach a tool needs an explicit entry, and the ones
+outside `permit()` need it most.
+
+The briefing needs no toolset at all - its data is pre-fetched by a script and injected into
+the prompt (see [[ARCHITECTURE]] §Pre-fetched context). That was chosen over granting
+`code_execution` precisely because this document says the cron path cannot be gated by L2.
+
 ### L1 — the floor, verified
 
 From Hermes' [environment variables reference](https://hermes-agent.nousresearch.com/docs/reference/environment-variables):
@@ -409,7 +430,15 @@ one: it tells you what she actually does before you start forbidding things.
 6. **How is a device recognised?** A cookie is per-browser, not per-device, and clearing it
    makes a trusted phone `unknown`. Blocks P6.
 
-7. **Selene shares this machine.** Isabella's L1 ceiling protects Isabella's instance.
+7. **Isabella can now open a terminal, and `permit()` does not exist yet.**
+   `POST /desktop/open/{name}` runs `tail`/`cat` in Terminal.app on the host - the first
+   executing path in this repo. It is narrow by construction (the commands are constants,
+   every target is read-only, and it never reaches Hermes, so the L1 floor is untouched),
+   but the *gate* today is code review rather than policy. It wants to be `Desktop(open:*)`
+   at P1, and `trigger` must never be a subject that can reach it. See
+   [[ARCHITECTURE]] §Opening a terminal.
+
+8. **Selene shares this machine.** Isabella's L1 ceiling protects Isabella's instance.
    It does nothing about Selene, who has her own toolsets and her own shell access to the
    same filesystem. Two AIs on one Mac is a threat model neither document has addressed.
 

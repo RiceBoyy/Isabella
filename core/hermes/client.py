@@ -14,7 +14,17 @@ from core.hermes.errors import (
     EmptyCompletion,
     HermesAuthError,
     HermesUnreachable,
+    JobRejected,
 )
+
+# POST /api/jobs accepts exactly these. Not model, not enabled_toolsets, not
+# workdir - cron/jobs.py::create_job takes them but the HTTP surface does not
+# pass them through. Sending more is silently dropped, which is worse than an
+# error, so the client sends only what lands.
+JOB_CREATE_FIELDS = frozenset({"name", "schedule", "prompt", "deliver", "skills", "repeat"})
+
+# PATCH's whitelist, from api_server.py::_UPDATE_ALLOWED_FIELDS.
+JOB_UPDATE_FIELDS = JOB_CREATE_FIELDS | {"enabled", "skill"}
 
 
 @dataclass(slots=True)
@@ -54,22 +64,37 @@ class HermesClient:
             return False, f"reachable but returned HTTP {r.status_code}"
         return True, "ok"
 
-    async def say(self, message: str) -> Reply:
+    async def say(
+        self, message: str, *, session_id: str | None = None, surface: str = "api"
+    ) -> Reply:
         """One turn.
 
         Deliberately sends no system message. Her identity is installed in
         ~/.hermes-isabella/SOUL.md; passing a system prompt here stacks a
         second identity on top of it and the model burns reasoning tokens
         reconciling them.
+
+        Two headers, doing different jobs (api_server.py):
+
+        - `X-Hermes-Session-Id` is *continuity* - without it every request is
+          its own conversation, which is fine for curl and useless for a chat
+          window where the second message refers to the first.
+        - `X-Hermes-Session-Key` is *memory scoping*. It does nothing today -
+          her instance has `memory.memory_enabled: false` - but it is what
+          keeps one surface's recall from leaking into another's when memory
+          is turned on, and it costs a header to be right in advance.
         """
         payload = {
             "model": self._cfg.hermes_model,
             "messages": [{"role": "user", "content": message}],
             "max_tokens": self._cfg.max_tokens,
         }
+        headers = {"X-Hermes-Session-Key": f"isabella:{surface}"}
+        if session_id:
+            headers["X-Hermes-Session-Id"] = session_id
         started = time.perf_counter()
         try:
-            r = await self._http.post("/v1/chat/completions", json=payload)
+            r = await self._http.post("/v1/chat/completions", json=payload, headers=headers)
         except httpx.RequestError as exc:
             raise HermesUnreachable(
                 f"{self._cfg.hermes_base_url} is not answering ({exc.__class__.__name__}). "
@@ -99,3 +124,68 @@ class HermesClient:
             completion_tokens=usage.get("completion_tokens", 0),
             seconds=time.perf_counter() - started,
         )
+
+    # ------------------------------------------------------------------
+    # Jobs. Isabella's trigger engine reconciles desired state into these;
+    # Hermes' scheduler owns when they actually fire.
+    # ------------------------------------------------------------------
+
+    async def _job_request(self, method: str, path: str, json: dict | None = None) -> dict:
+        try:
+            r = await self._http.request(method, path, json=json)
+        except httpx.RequestError as exc:
+            raise HermesUnreachable(
+                f"{self._cfg.hermes_base_url} is not answering ({exc.__class__.__name__}). "
+                "Is her gateway running?"
+            ) from exc
+
+        if r.status_code == 401:
+            raise HermesAuthError("Hermes rejected the API key.")
+        if r.status_code == 404:
+            return {}
+        if r.status_code >= 400:
+            # 424 is the one that matters: saved but not scheduled. It would
+            # otherwise read as "created" and never fire.
+            detail = r.json().get("error", r.text) if r.text else r.reason_phrase
+            raise JobRejected(r.status_code, str(detail))
+        return r.json()
+
+    async def list_jobs(self, *, include_disabled: bool = True) -> list[dict]:
+        """Disabled jobs are included by default, unlike Hermes' own default.
+
+        `GET /api/jobs` hides disabled jobs unless asked. A reconciler that
+        cannot see a paused job concludes it is missing and creates a second
+        one - so pausing the briefing silently produced a duplicate that was
+        not paused. Verified against the live gateway, not inferred.
+        """
+        query = "?include_disabled=true" if include_disabled else ""
+        body = await self._job_request("GET", f"/api/jobs{query}")
+        return body.get("jobs", [])
+
+    async def create_job(self, payload: dict) -> dict:
+        body = await self._job_request(
+            "POST", "/api/jobs", {k: v for k, v in payload.items() if k in JOB_CREATE_FIELDS}
+        )
+        return body.get("job", {})
+
+    async def update_job(self, job_id: str, payload: dict) -> dict:
+        body = await self._job_request(
+            "PATCH", f"/api/jobs/{job_id}",
+            {k: v for k, v in payload.items() if k in JOB_UPDATE_FIELDS},
+        )
+        return body.get("job", {})
+
+    async def delete_job(self, job_id: str) -> None:
+        await self._job_request("DELETE", f"/api/jobs/{job_id}")
+
+    async def pause_job(self, job_id: str) -> dict:
+        body = await self._job_request("POST", f"/api/jobs/{job_id}/pause")
+        return body.get("job", {})
+
+    async def resume_job(self, job_id: str) -> dict:
+        body = await self._job_request("POST", f"/api/jobs/{job_id}/resume")
+        return body.get("job", {})
+
+    async def run_job(self, job_id: str) -> dict:
+        body = await self._job_request("POST", f"/api/jobs/{job_id}/run")
+        return body.get("job", {})

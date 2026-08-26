@@ -104,6 +104,8 @@ Isabella/
 ├── policy/             # permissions.json — the action policy (git-versioned)
 ├── triggers/           # YAML trigger definitions
 │   └── daily-briefing.yaml
+├── scripts/            # pre-run scripts - fetch data before the model runs
+│   └── briefing_fetch.py   #   installed to ~/.hermes-isabella/scripts/
 ├── data/               # SQLite - Isabella's own state (gitignored)
 └── docker-compose.yml  # portable deployment                      (M5)
 ```

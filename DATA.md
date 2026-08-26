@@ -1,7 +1,7 @@
 # Isabella Data Flow
 
 **Date:** 2026-08-23
-**Status:** Design — schema and behaviour verified against the live Hermes install on this Mac
+**Status:** Design - schema and behaviour verified against the live Hermes install on this Mac
 **Companions:** [[README]] · [[ARCHITECTURE]] · [[PERMISSIONS]] · [[ROADMAP]] · [[CLAUDE]]
 
 Where a message goes, what gets written down, where it lives, and what leaves the machine.
@@ -9,7 +9,7 @@ Where a message goes, what gets written down, where it lives, and what leaves th
 Everything in the "Where it lives" and "What leaves" sections was read from a real
 Hermes install on 2026-08-23, not inferred from documentation.
 
-**Whose install, precisely.** The numbers below come from `~/.hermes` — which belongs to
+**Whose install, precisely.** The numbers below come from `~/.hermes` - which belongs to
 **Selene**, not Isabella ([[ARCHITECTURE]] §One Hermes each). Isabella has her own
 instance at `~/.hermes-isabella` on port 8643, and it is empty until M1. Selene's install
 is used here as a *preview*: same Hermes version, same schema, same defaults, and a
@@ -23,12 +23,12 @@ below reads `~/.hermes`, Isabella's equivalent is `~/.hermes-isabella`.
 **Isabella stores almost none of your data. Hermes stores nearly all of it.**
 
 Selene's `~/.hermes/state.db` holds **62 sessions and 249 messages, 6.1 MB** after three
-days — and every one of those sessions has `source = 'api_server'`, meaning they arrived
+days - and every one of those sessions has `source = 'api_server'`, meaning they arrived
 over exactly the kind of connection Isabella will make. That is the shape of what
 `~/.hermes-isabella/state.db` becomes.
 
 So "where is my data?" is answered by `~/.hermes-isabella/`, not by this repo.
-Isabella's own database holds triggers, run history, persona versions and verdicts —
+Isabella's own database holds triggers, run history, persona versions and verdicts -
 **no message content at all.** That is a deliberate consequence of [[ARCHITECTURE]]
 §Data and state: two memory systems drift, and then nothing can answer what she actually
 knows.
@@ -46,7 +46,7 @@ minds, two backup jobs.
 ## The second finding: today, nothing leaves this machine
 
 Read from Selene's `~/.hermes/config.yaml`. Isabella's instance starts from Hermes'
-defaults, so **this is the configuration to replicate, not inherit** — a fresh
+defaults, so **this is the configuration to replicate, not inherit** - a fresh
 `HERMES_HOME` does not copy it:
 
 ```yaml
@@ -57,7 +57,7 @@ model:
 ```
 
 Inference runs on this Mac. And of the hosted memory and telemetry providers Hermes
-supports — Honcho, Hindsight, Mem0, RetainDB, Supermemory, Langfuse — **none are
+supports - Honcho, Hindsight, Mem0, RetainDB, Supermemory, Langfuse - **none are
 configured.** That `.env` has 15 active keys and not one of them is a third-party
 credential.
 
@@ -75,7 +75,7 @@ break it.
 
 Two paths, and they differ in the way that matters most: whether you are there.
 
-### Attended — you type something
+### Attended - you type something
 
 ```mermaid
 sequenceDiagram
@@ -112,7 +112,7 @@ sequenceDiagram
 **What Isabella writes: one `runs` row and one `decisions` row.** Not the message. Not
 the reply. The transcript is Hermes' at step 7 and stays Hermes'.
 
-### Unattended — the daily briefing
+### Unattended - the daily briefing
 
 This is the path that actually characterises her, because it is the one that runs while
 you are asleep. **Isabella is not in it.**
@@ -130,7 +130,7 @@ sequenceDiagram
 
     Note over C: 07:00. Isabella's process may be stopped.
     C->>X: INSERT executions (status=claimed)
-    C->>H: run job — prompt + skills [calendar, email]
+    C->>H: run job - prompt + skills [calendar, email]
     H->>D: INSERT sessions (source=cron)
     H->>H: calendar + email tools
     H->>O: compose briefing
@@ -139,13 +139,21 @@ sequenceDiagram
     H->>T: deliver
     T->>U: notification
     C->>X: UPDATE executions (status=completed)
-    Note over C,U: no Isabella row anywhere.<br/>her runs table never sees this.
+    Note over C,U: Isabella is absent for all of it.
+    I->>H: later: GET /api/jobs (latest_execution)
+    I->>I: INSERT runs, keyed on Hermes' execution id
 ```
 
-**This is the data gap.** The briefing is the flagship feature and Isabella has no record
-that it happened. Her `runs` table describes only what passed through her. Reconciling
-that means polling `GET /api/jobs/{id}` for last-run state and writing it back — real
-work, listed in §Open questions, not quietly assumed.
+**This was the data gap, and it is now closed by pulling rather than by being told.** The
+briefing is the flagship feature and Isabella had no record it happened; her `runs` table
+described only what passed through her. `sync_runs()` folds Hermes' execution records in
+when someone reads `/runs` or `/triggers` - keyed on Hermes' execution id, so syncing twice
+is a no-op. She stores the outcome and the error, never the briefing text: that stays in
+`state.db`, and one message store remains one message store.
+
+**What is still true:** only `latest_execution` is exposed per job, so two runs between two
+syncs lose the middle one. Unreachable at `max_runs_per_day: 1`. And she learns *that* it
+ran, not what it said - the audit trail is an index into Hermes' ledger, not a copy of it.
 
 It is the same shape as the enforcement gap in [[PERMISSIONS]]: **anything that does not
 pass through Isabella is invisible to Isabella.** Policy and audit fail at the same seam,
@@ -156,26 +164,26 @@ for the same reason.
 ## Where it lives
 
 **These are Isabella's paths.** Sizes are measured from Selene's equivalent install on
-2026-08-23 — same Hermes version, same layout — and are shown to give a sense of scale,
+2026-08-23 - same Hermes version, same layout - and are shown to give a sense of scale,
 not because Isabella's directory holds them yet. Hers is empty until M1.
 
 | Path | Holds | Backup? | Size on Selene's |
 |---|---|---|---|
 | `~/.hermes-isabella/state.db` | Sessions, messages, FTS index, system prompts | **Critical** | 6.1 M |
-| `~/.hermes-isabella/skills/` | Skill packs — stock at first, self-taught later | **Critical once learned** | 5.9 M |
+| `~/.hermes-isabella/skills/` | Skill packs - stock at first, self-taught later | **Critical once learned** | 5.9 M |
 | `~/.hermes-isabella/config.yaml` | Model, toolsets, memory, compression | Yes | 4.8 K |
-| `~/.hermes-isabella/.env` | **Secrets.** API keys, tokens | Yes — encrypted, never git | 24 K |
-| `~/.hermes-isabella/cron/executions.db` | Scheduled-run history — the briefing | Yes | 60 K |
+| `~/.hermes-isabella/.env` | **Secrets.** API keys, tokens | Yes - encrypted, never git | 24 K |
+| `~/.hermes-isabella/cron/executions.db` | Scheduled-run history - the briefing | Yes | 60 K |
 | `~/.hermes-isabella/kanban.db` | Multi-agent task board | Optional | 116 K |
 | `~/.hermes-isabella/response_store.db` | `/v1/responses` state | Optional | 20 K |
-| `~/.hermes-isabella/logs/` | Agent logs | No — rotate | 456 K |
+| `~/.hermes-isabella/logs/` | Agent logs | No - rotate | 456 K |
 | `~/.hermes-isabella/cache/` | Model catalogues, derived | No | 416 K |
 | `~/.hermes-isabella/sandboxes/` | Shell workspaces | No | 0 B |
-| `Isabella/policy/permissions.json` | The action policy | **Git** | — |
-| `Isabella/triggers/*.yaml` | Trigger definitions | **Git** | — |
-| `Isabella/data/isabella.db` | Triggers, runs, persona, projects, decisions | Yes | — |
+| `Isabella/policy/permissions.json` | The action policy | **Git** | - |
+| `Isabella/triggers/*.yaml` | Trigger definitions | **Git** | - |
+| `Isabella/data/isabella.db` | Triggers, runs, persona, projects, decisions | Yes | - |
 
-**Not Isabella's, and never to be touched:** `~/.hermes/` — Selene's install, live on a
+**Not Isabella's, and never to be touched:** `~/.hermes/` - Selene's install, live on a
 separate gateway. It appears nowhere in Isabella's backup or config story.
 
 Two notes on that table.
@@ -185,15 +193,15 @@ stock category bundles (`apple`, `devops`, `github`, `email`, …) shipped with 
 nothing there is irreplaceable *yet*. The moment Hermes' learning loop starts writing
 skills of its own, that directory becomes the least replaceable thing Isabella owns.
 
-**A stock `.env` is ~24 KB but only ~15 keys are active** — the rest is commented
+**A stock `.env` is ~24 KB but only ~15 keys are active** - the rest is commented
 documentation. Convenient, and a trap: an egress-enabling variable is one deleted `#`
 away from being live. See §What would break it.
 
 ---
 
-## Schematic — Hermes' tables
+## Schematic - Hermes' tables
 
-Read from a live `state.db`. This is the real schema, not a sketch — and it is identical
+Read from a live `state.db`. This is the real schema, not a sketch - and it is identical
 for both instances, because it comes from the same Hermes version.
 
 ```mermaid
@@ -242,11 +250,11 @@ erDiagram
 
 Three columns deserve attention:
 
-- **`reasoning`** — chain-of-thought is persisted alongside the reply. Her private
+- **`reasoning`** - chain-of-thought is persisted alongside the reply. Her private
   thinking is on disk, not just her output.
-- **`cwd`, `git_branch`, `git_repo_root`** — sessions record which repo you were in.
+- **`cwd`, `git_branch`, `git_repo_root`** - sessions record which repo you were in.
   Useful for the dev-copilot ambition; also a record of what you were working on and when.
-- **`active` / `compacted`** — see below.
+- **`active` / `compacted`** - see below.
 
 ### Your history is a compacting store, not an archive
 
@@ -255,7 +263,7 @@ Three columns deserve attention:
 originals flagged.
 
 I verified the columns exist and that compression is on. **I did not verify whether
-compacted rows are eventually deleted or retained indefinitely** — that needs reading the
+compacted rows are eventually deleted or retained indefinitely** - that needs reading the
 compaction code, and I would rather say so than guess about your data.
 
 Either way the honest framing is: **do not treat `messages` as a permanent verbatim
@@ -263,7 +271,7 @@ record of everything ever said.** If you want that, snapshot the DB.
 
 ---
 
-## Schematic — Isabella's tables
+## Schematic - Isabella's tables
 
 Proposed. None of this exists yet.
 
@@ -314,7 +322,7 @@ erDiagram
 ```
 
 **`runs.hermes_session_id` is the join.** It is the only thread stitching Isabella's audit
-trail to Hermes' transcripts. Without it, "why did she do that at 07:00?" has no answer —
+trail to Hermes' transcripts. Without it, "why did she do that at 07:00?" has no answer -
 her side records the decision, Hermes' side records the words, and nothing connects them.
 Store it on every run or the audit trail is decorative.
 
@@ -326,14 +334,14 @@ Ranked by how much it would matter.
 
 | Sink | Sends | Status today |
 |---|---|---|
-| **Inference provider** | Every prompt, full history, system prompt | **Local** — Ollama on `127.0.0.1:11434` |
-| **Honcho** | Behavioural model of you, cross-session | **Off** — defaults to Honcho *cloud* if enabled |
-| **Hindsight / Mem0 / RetainDB / Supermemory** | Memory contents | **Off** — all default to hosted |
-| **Langfuse** | Full traces: prompts and responses, 12 000 chars/field | **Off** — defaults to `cloud.langfuse.com` |
-| **Channel connectors** | Every delivered message | Telegram, when M2 lands — their servers, their retention |
+| **Inference provider** | Every prompt, full history, system prompt | **Local** - Ollama on `127.0.0.1:11434` |
+| **Honcho** | Behavioural model of you, cross-session | **Off** - defaults to Honcho *cloud* if enabled |
+| **Hindsight / Mem0 / RetainDB / Supermemory** | Memory contents | **Off** - all default to hosted |
+| **Langfuse** | Full traces: prompts and responses, 12 000 chars/field | **Off** - defaults to `cloud.langfuse.com` |
+| **Channel connectors** | Every delivered message | Telegram, when M2 lands - their servers, their retention |
 | **`web_search` / `web_extract`** | Your query text | Per call, to whichever search backend |
 | **`image_gen`** | Your prompt | FAL.ai, when used |
-| **BrowserBase** | Browsing session | Keys present in `.env` — verify before enabling |
+| **BrowserBase** | Browsing session | Keys present in `.env` - verify before enabling |
 
 ### What would break it
 
@@ -346,7 +354,7 @@ HERMES_LANGFUSE_PUBLIC_KEY= # every prompt and reply → cloud.langfuse.com
 MEM0_API_KEY=...            # memories → app.mem0.ai
 HINDSIGHT_API_KEY=...       # memories → hindsight.vectorize.io
 SUPERMEMORY_API_KEY=...     # memories → supermemory.ai
-model.provider: anthropic   # config.yaml — every prompt leaves, no env var involved
+model.provider: anthropic   # config.yaml - every prompt leaves, no env var involved
 HERMES_DUMP_REQUESTS=true   # full payloads written to log files in plaintext
 ```
 
@@ -354,7 +362,7 @@ HERMES_DUMP_REQUESTS=true   # full payloads written to log files in plaintext
 capabilities without the egress. That is the middle path, and it is documented.
 
 **The last two are the sneaky ones.** Changing the model provider in `config.yaml`
-involves no environment variable at all — the local-inference property is a *config
+involves no environment variable at all - the local-inference property is a *config
 value*, not a guarantee. And `HERMES_DUMP_REQUESTS` writes plaintext prompts to disk in
 a directory that is not otherwise sensitive.
 
@@ -366,10 +374,10 @@ a directory that is not otherwise sensitive.
 |---|---|---|
 | Messages | Indefinite, but compacted in place | `compression.*` in `config.yaml` |
 | Sessions | Reset after idle; currently `mode: none` | `session_reset.*` |
-| Cron executions | Indefinite | Nothing — grows unbounded |
-| Isabella `runs` / `decisions` | Indefinite | Nothing yet — **needs a policy** |
+| Cron executions | Indefinite | Nothing - grows unbounded |
+| Isabella `runs` / `decisions` | Indefinite | Nothing yet - **needs a policy** |
 | Pending approvals | 240 minutes, then dropped as stale | [[PERMISSIONS]] §queue |
-| Logs | Indefinite | Nothing — rotate them |
+| Logs | Indefinite | Nothing - rotate them |
 | Sandboxes | 300 s lifetime | `terminal.lifetime_seconds` |
 
 Three of those say "nothing." An audit log that grows forever eventually becomes the
@@ -406,8 +414,8 @@ sqlite3 ~/.hermes-isabella/state.db \
 sqlite3 ~/.hermes-isabella/state.db ".backup ~/isabella-backup-$(date +%F).db"
 ```
 
-`.backup` is the correct way to copy a live SQLite database. `cp` on a WAL-mode DB —
-which this is, `journal_mode: wal` — can capture a torn state.
+`.backup` is the correct way to copy a live SQLite database. `cp` on a WAL-mode DB -
+which this is, `journal_mode: wal` - can capture a torn state.
 
 ---
 
@@ -417,28 +425,31 @@ which this is, `journal_mode: wal` — can capture a torn state.
 or a VPS. **The data question that raises has no answer yet.**
 
 Moving hosts means moving `~/.hermes-isabella/` entire, or she arrives with amnesia. Running on two hosts at once means either one is authoritative and the other
-is a client, or they fork and never reconcile — SQLite gives you no merge.
+is a client, or they fork and never reconcile - SQLite gives you no merge.
 
 The likely shape: **one host owns `~/.hermes-isabella`; every other device is a remote
-client over Tailscale.** That is not a second Isabella, it is a second window onto the same one — and
+client over Tailscale.** That is not a second Isabella, it is a second window onto the same one - and
 it makes the deferred remote-access decision a *data* decision, not just a network one.
 
 ---
 
 ## Open questions
 
-1. **Cron runs are invisible to Isabella.** The briefing produces no `runs` row. Poll
-   `GET /api/jobs/{id}` for last-run state and reconcile? Or accept that her audit trail
-   covers only attended work and say so plainly in the UI?
+1. ~~**Cron runs are invisible to Isabella.**~~ **Answered 2026-08-23: poll and reconcile.**
+   `sync_runs()` reads `latest_execution` from `GET /api/jobs` and writes a `runs` row keyed
+   on Hermes' execution id. The alternative - accepting an audit trail that covers only
+   attended work - was rejected: the unattended runs are the ones she exists for. Residual
+   limit: only the latest execution per job is exposed, so a trigger firing more than once
+   between syncs loses the middle runs. That wants an executions endpoint upstream.
 
 2. **Are compacted messages deleted?** Not verified. Determines whether `state.db` is an
-   archive or a rolling window — and therefore what a backup is actually worth.
+   archive or a rolling window - and therefore what a backup is actually worth.
 
 3. **Retention for `decisions`.** [[PERMISSIONS]] logs every verdict including allows.
    At what age does that get pruned, and does pruning an audit log defeat its purpose?
 
 4. **`reasoning` is on disk.** Her chain-of-thought is persisted per message. Is that
-   wanted — useful for debugging why she did something — or is it the most sensitive
+   wanted - useful for debugging why she did something - or is it the most sensitive
    column in the schema? It is currently both.
 
 5. **Sessions record `git_repo_root` and `cwd`.** A log of what you worked on and when,
@@ -446,7 +457,7 @@ it makes the deferred remote-access decision a *data* decision, not just a netwo
 
 6. **`terminal.backend: local`, not `docker`.** [[PERMISSIONS]] P0 recommends
    `TERMINAL_ENV=docker` so shell runs contained. The live config runs on the host. This
-   is a real gap between the recommendation and the machine — close it before M2.
+   is a real gap between the recommendation and the machine - close it before M2.
 
 7. **Nothing is encrypted at rest.** `state.db` is a plain file containing every
    conversation. FileVault covers it on this Mac; a Pi or VPS would not, by default.

@@ -85,3 +85,17 @@ async def test_no_system_message_is_sent():
     c = _client(capture)
     await c.say("hi")
     assert [m["role"] for m in seen["messages"]] == ["user"]
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_asks_for_disabled_ones():
+    """Hermes hides disabled jobs by default. A reconciler that cannot see a
+    paused job creates a second one - which is exactly what happened."""
+    seen = {}
+
+    def handler(request):
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={"jobs": []})
+
+    await _client(handler).list_jobs()
+    assert "include_disabled=true" in seen["url"]
