@@ -64,22 +64,37 @@ class HermesClient:
             return False, f"reachable but returned HTTP {r.status_code}"
         return True, "ok"
 
-    async def say(self, message: str) -> Reply:
+    async def say(
+        self, message: str, *, session_id: str | None = None, surface: str = "api"
+    ) -> Reply:
         """One turn.
 
         Deliberately sends no system message. Her identity is installed in
         ~/.hermes-isabella/SOUL.md; passing a system prompt here stacks a
         second identity on top of it and the model burns reasoning tokens
         reconciling them.
+
+        Two headers, doing different jobs (api_server.py):
+
+        - `X-Hermes-Session-Id` is *continuity* - without it every request is
+          its own conversation, which is fine for curl and useless for a chat
+          window where the second message refers to the first.
+        - `X-Hermes-Session-Key` is *memory scoping*. It does nothing today -
+          her instance has `memory.memory_enabled: false` - but it is what
+          keeps one surface's recall from leaking into another's when memory
+          is turned on, and it costs a header to be right in advance.
         """
         payload = {
             "model": self._cfg.hermes_model,
             "messages": [{"role": "user", "content": message}],
             "max_tokens": self._cfg.max_tokens,
         }
+        headers = {"X-Hermes-Session-Key": f"isabella:{surface}"}
+        if session_id:
+            headers["X-Hermes-Session-Id"] = session_id
         started = time.perf_counter()
         try:
-            r = await self._http.post("/v1/chat/completions", json=payload)
+            r = await self._http.post("/v1/chat/completions", json=payload, headers=headers)
         except httpx.RequestError as exc:
             raise HermesUnreachable(
                 f"{self._cfg.hermes_base_url} is not answering ({exc.__class__.__name__}). "

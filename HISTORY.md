@@ -29,7 +29,769 @@ correction, and how it was caught. Those are the entries worth re-reading.
 
 ---
 
+# 2026-08-27
+
+### `Fixed` - Terminal does close its windows. I measured it wrong.
+
+**What:** `close_target` now kills what is running, waits for the tab to stop being busy, and
+then calls AppleScript `close`. The window is genuinely gone. Yesterday's implementation
+hid the window instead (`set visible to false`) and the docs said, in three places, that
+"macOS Terminal ignores AppleScript `close`". That was false.
+
+**Why it was believed:** the test for "did it close" was `id of every window`. **That list
+keeps returning ids for windows that have already closed.** So every close looked like a
+silent no-op, on a fresh window, with nothing running in it - which is about as convincing as
+a negative result gets. A day of design was built on top of it: hiding instead of closing,
+husk detection, window reuse, a `visible` field, and an endpoint whose response explained at
+length that the window was still in the Window menu.
+
+**How it was caught:** Owen asked *"how to close the tab in terminal?"* - a question about the
+manual keystroke, not a bug report. Re-testing to answer it, a window that had refused to
+close turned out to be gone: `tab 1 of window id N` raised *Invalid index* while the id was
+still being listed. `_LIST` - which enumerates windows that still have tabs - had been
+reporting the truth the whole time, one function away from the check that was lying.
+
+**What is actually true:** Terminal refuses to close a **busy** window and says nothing about
+it. There is no error to catch, because what it wants to do is show its "terminate running
+processes?" sheet, and it cannot show that to a script. An idle window closes immediately, and
+so does a husk. Hence kill → wait for `busy` → close.
+
+**Effect:** `set visible` is gone, and so is the `visible` field, the reuse-a-hidden-window
+path, and the paragraph in the response explaining that "closed" did not mean closed.
+`open logs` on an already-open target still brings that window forward and restarts the
+command in it, which is worth keeping. If something is still running after the kill it is
+something Owen started in a window of hers: that window is reported as `stubborn` and left
+alone, with the footer telling him it is shift-cmd-W.
+
+**The lesson, since it will happen again:** a negative result from an API needs its
+measurement checked before it becomes an architecture. `ARCHITECTURE.md` and `CLAUDE.md` both
+carried the wrong claim as a decision, which is how a bad measurement becomes a rule.
+
+---
+
 # 2026-08-26
+
+### `Added` - `close logs`, and the terminals get reused instead of piling up (the `close` half of this was WRONG - corrected 2026-08-27, see above)
+
+**What:** every tab Isabella opens is now stamped `Isabella · <target>` as its Terminal custom
+title. `close logs` / `close errors` / `close gateway` stop what is running in that window and
+take it off the screen; `close terminals` does all of hers at once. `GET /desktop` reports
+`open` per target, so the palette offers `close logs` only when there is a logs window to
+close. `POST /desktop/close[/{name}]` is new.
+
+**Why:** Owen, after `Q` closed a view window: *"we should also do that for terminals we opens
+such as logs and stuff."* A keystroke cannot reach Terminal from the browser, so it is a
+command - but it is the same job.
+
+**The thing that decided the shape: macOS Terminal ignores AppleScript `close`.** Verified,
+not assumed - `close window id N` on a window created moments earlier and running nothing
+returns success and the window stays; `close tab ...` is not understood at all. So "closing"
+is two real actions instead of one impossible one: kill the pipeline, then
+`set visible to false`, which does work. The window is not destroyed - it stays in Terminal's
+Window menu - and the endpoint says so in its own response rather than reporting a close.
+
+**The upside of not destroying it:** the window is reused. `open logs` after `close logs`
+brings the same one back and restarts the pipeline in it, so windows do not accumulate - the
+same one-window-per-thing rule the browser views follow. A window whose shell has exited
+cannot take a new command, so it is treated as a husk, hidden, and a fresh one opened;
+`windows()` returns only live windows, which was a real bug for two rounds of testing: first
+a husk shadowed the real window and `open logs` reported reusing one nobody could see, then
+`GET /desktop` reported `open: true` for a window that had just been closed. Reusable and
+on-screen are different questions and the code now asks both.
+
+**The part that needed the most care:** `_kill()` is the only thing in `core/desktop.py` that
+is not read-only, and the module's docstring said plainly that nothing in it writes. Three
+bounds, and the tests pin all three: the tty must belong to a window carrying her title; the
+shell is never touched; and the command must be one of the handful this file itself runs. A
+`vim` on her tty is Owen's and is left alone. The tty string comes back from AppleScript and
+is checked against `^/dev/ttys\d+$` before it reaches a subprocess - local is not the same as
+trusted.
+
+**Also `Removed`:** `_applescript()`, replaced by `_first_open()` and `_reopen()`.
+
+---
+
+
+### `Added` - `Q` closes the window you are looking at
+
+**What:** `Q` closes a spawned view window and hands the screen back to home. It is the same
+act as picking `home` from that window, which already closed it - `router.ts` now exposes
+`close()` and both routes go through it.
+
+**Why:** every other way out of a view is a keystroke. A window that has to be closed with
+the mouse would be the single place this interface makes you reach for the trackpad.
+
+**Effect:** on home, `Q` does nothing but say why - *home is the one that stays*. It was never
+script-opened, so the browser would refuse to close it anyway, and closing it is the opposite
+of what the windows are for. The footer names the key on a view window (`K · Q closes this
+window`), and the palette's `home` row says `— closes this window · Q`.
+
+Guarded like every other key: not while typing, not while the palette is open.
+
+---
+
+
+### `Fixed` - a spawned window inheriting home's full-screen shape covered home
+
+**What:** the size is now applied twice - `fit()` from the opener, and `useOwnWindow()` in the
+new window itself on first load. The new window checks its own dimensions and, if it came out
+covering the screen, puts itself back to the size that was asked for.
+
+**Why:** Owen: *"sometimes i have full screen, so the next browser that opens will be in full
+screen. which breaks the point of showing in different pages."* The feature string passed to
+`window.open` is a request, not an instruction - when the opener is maximised or full-screen
+the browser hands the new window the same shape, so it opened covering home completely, which
+is exactly what spending a window on it was supposed to avoid.
+
+**Effect:** both halves are kept on purpose. The opener's `resizeTo` runs before the new
+window has laid anything out and is the call browsers most readily ignore; the child's runs
+in its own context, after it exists. Either alone leaves a case uncovered.
+
+**Two guards so it does not become annoying:** it fires only when the window came out
+covering ≥94% of the screen, so a window sized by hand is left alone; and only once per
+window, flagged in `sessionStorage`, so a reload never re-shrinks a window someone maximised
+on purpose. The flag is reliably absent on first load because home never sets it and a
+spawned window inherits only a copy of home's storage.
+
+**What this does not fix, stated:** macOS native full-screen. The browser opens the new window
+in its own Space and no script can pull it back out. It is still resized, so it is an ordinary
+window once you leave that Space.
+
+---
+
+
+### `Changed` - a view opens in a WINDOW, not a tab
+
+**What:** `window.open(url, name)` became `window.open(url, name, chrome())`, where `chrome()`
+returns `popup=yes` plus a size and an offset. Passing any features at all is what makes the
+browser spend a window instead of a tab - that is the whole of the change, and the reason
+that function must never return an empty string.
+
+**Why:** the previous entry opened views in tabs, and Owen: *"it should open a new browser
+page."* He is right and the earlier reading was too literal: a tab is only unhidden while it
+is the front tab, so putting `chat` in one leaves home behind a tab strip. That is the same
+complaint in a smaller form.
+
+**Effect:** the new window is sized to the screen (72% wide, 86% tall, capped at 1280x900)
+and offset 48px from the window that opened it, clamped so a home window near an edge does
+not push its child off the display. The offset is not decoration - a window landing exactly
+on top of home reads as home having been replaced, which is the one thing this rule exists to
+prevent.
+
+Everything else is unchanged: the window is still named, so picking `chat` twice reuses it;
+a spawned window still navigates in place; `home` still closes it; a deep link typed by hand
+still behaves like an ordinary page. The palette rows now say `opens a window` and
+`closes this window`.
+
+---
+
+
+### `Changed` - a view opens in its own tab, so home is never replaced
+
+**What:** picking a view from home now opens it in a new browser tab rather than navigating
+over the top of the brain. The tab is named (`isabella/chat`), so picking `chat` twice reuses
+it instead of stacking a second one. From a spawned tab everything navigates in place, and
+`home` closes the tab. Tabs are titled after what is in them - `Isabella · chat`.
+
+**Why:** Owen: *"i dont want the user to hide the home view."* Home is the screen that stays
+up; losing the brain and her latest reply to go and read the trigger list was the wrong
+trade.
+
+**Effect:** a deep link typed by hand has no opener and behaves like an ordinary page -
+everything navigates in place, including home. `window.close()` works on the spawned tabs
+precisely because they were script-opened, and falls back to navigating home if the browser
+refuses (a reloaded tab can lose its opener). The palette rows now say which it will be:
+`/chat — opens a tab`, `/ — closes this tab`, `/triggers — you are here`.
+
+**The trap this created, and how it is handled:** a tab is a separate copy of the app, with
+its own chat state and its own session id. So the ask fallback does NOT spend a tab - it
+navigates in place, because the turn lives in this App's memory and a new tab would put the
+answer in a component nobody is looking at. Asking from `/triggers` moves to `/chat` in the
+same tab. Related: `open()` has to stay synchronous from the keypress, or `window.open`
+becomes a popup and gets blocked.
+
+**Still hand-written**, and now for a second reason: no router ships the rule that one route
+is protected and the others cost a tab.
+
+---
+
+
+### `Added` - addresses. Every view has a path, and `settings` is a place now
+
+**What:** `/`, `/chat`, `/briefings`, `/triggers`, `/body`, `/health`, `/settings`,
+`/settings/google`. `web/src/router.ts` (new, ~40 lines) and `ROUTES` in `App.tsx`, which is
+now the only table of views - the palette builds its commands from it, the number keys index
+into it, and the renderer switches on it. `views/Settings.tsx` is new.
+
+**Why:** the whole interface was at `/`. A reload put you back on home whatever you were
+reading, nothing could be linked or bookmarked, and the back button did nothing.
+
+**Effect:**
+
+- `google` moved from the top level to `/settings/google`, because that is what it is.
+  `body` and `health` stayed top-level: they are readings, not settings, and that distinction
+  is worth keeping in the address bar.
+- `/settings` is an index of what can actually be configured, which today is one row. It is a
+  readout with the command named beside it, not a page of controls - a settings page is the
+  most tempting place to quietly reintroduce buttons.
+- an address that is not a route says so and names the ones that are. Redirecting to home
+  would be tidier and would hide the typo that got you there.
+
+**No router dependency.** Eight static paths, no params, no loaders, no nesting past one
+level. `react-router` would be a dependency bought for nothing, and CLAUDE.md asks for the
+check to be made rather than assumed. Vite's dev server already serves `index.html` on deep
+paths, so nothing was needed there - verified against all eight plus one nonsense path.
+
+**What did not change:** there are still no links anywhere. The palette is how you go
+somewhere; the addresses are so you can come back to somewhere.
+
+---
+
+
+### `Removed` - the chat box on home. `K` is the only input now
+
+**What:** the input under the core is gone. `K` opens the palette; a string that matches a
+command runs it, and a string that matches nothing is said to her. The fallback row is
+labelled with the text that will actually be sent, drawn in sans and in the violet.
+
+**Why:** Owen: *"that makes it easier to understand that k is for actions instead of having
+two input fields and new users need to understand the differences."* Two boxes on one screen
+and nothing announcing which was which - and the difference was not worth learning, because
+both took a string and did something with it.
+
+**Effect:** the interface has exactly one input. Commands win the tie, so typing `body` shows
+the body rather than asking her about bodies, and the ask row only appears when the match set
+is empty. Asking while she is still answering says so in the footer instead of being
+swallowed - `useChat.send` returns early when busy, which would otherwise have been a silent
+no-op.
+
+**Why this is the M6 shape and not just a tidier one:** a command router does not care whether
+the string came from a keyboard or a microphone, and there was never going to be a second
+microphone for commands. The palette was always going to be that router. This makes it the
+router for everything now.
+
+**The bit that carries the explanation:** the ask row is sans in a list that is otherwise
+mono - the design system's split by who is speaking. Every other row is a thing the machine
+will do; that one is a sentence a person is about to say. It does the work the second box
+was doing badly.
+
+**Also:** home prints `PRESS K AND SAY SOMETHING` when nothing has been said yet. An empty
+screen with its only input behind a keypress, and no mention of the keypress, is an empty
+screen nobody types into.
+
+---
+
+
+### `Removed` - the log view. Logs are terminals, and now they have colour
+
+**What:** `views/Log.tsx`, `core/hermes/logs.py` and `GET /log` are gone, along with the
+`log errors` / `log warnings` / `log everything` commands. Her agent, error and gateway logs
+are read through `open logs`, `open errors`, `open gateway` and nowhere else. Those three
+now pipe through `core/logcolour.awk`.
+
+**Why:** Owen saw five entries in the palette - `log`, `chat log`, `log errors`,
+`log warnings`, `log everything` - that all opened a browser view, and said logs should open
+terminals. He is right, and the reason is not preference: her logs were *already* readable
+that way, live, and adding a second reader meant two places to look at one file with the
+browser one strictly worse at the thing a log is for. `tail -f` is a terminal idiom.
+
+**Effect:** red is an error, yellow a warning, everything else dim. A traceback's own lines
+carry no level and inherit the colour of the line above, so a stack trace reads as part of
+the error it belongs to instead of dropping to grey halfway down. Three colours and no more -
+the question being asked of a scrolling log is *is anything wrong*, and a rainbow answers it
+worse than three do. A one-line key prints at the top of the window.
+
+**The bit that needed care:** `core/desktop.py` executes on the host and its whole security
+argument is that the commands are constants. The awk program is a git-versioned file next to
+`desktop.py`, with its path derived from the module's own location - never from a request. It
+is a file rather than an inline program because the command ends up inside an AppleScript
+string, and an awk program full of quotes and backslashes through that escaping is a bug
+waiting to happen. `test_every_shipped_target_is_read_only` now checks *every stage* of every
+pipeline, not just the first: a pipeline is only as read-only as its last stage.
+
+**Also `Changed`:** `chat log` is now just `chat`. It is the transcript, not a log, and
+naming it "chat log" put it in the same sentence as the agent log - which is the exact
+confusion this removal is about. It stays a view: prose she wrote is not machine output.
+
+**Recorded as a decision** in `ARCHITECTURE.md` and as a rule in `CLAUDE.md`, because the
+tempting thing to do next time is add `GET /log` back.
+
+---
+
+
+### `Added` - `home`, with the brain on it and the box you talk to her in
+
+**What:** a `home` view, first in the list and where a load now lands. It is Selene's HUD:
+a core in the middle of an instrument frame, chat underneath. `Brain3D.tsx`, `lib/brain.ts`,
+`lib/sim.ts` and `lib/graph.ts` are ported from Selene, plus `public/anatomy/brain.json`
+(Z-Anatomy, CC BY-SA 4.0 - the credit is drawn by the component). New behind it:
+`core/mind.py` and `GET /mind`.
+
+**Why:** chat was a view behind a keypress and the thing done most often should not be. And
+the screen had no centre - `Rings.tsx` was written for a home view that was never built and
+had been sitting unimported since.
+
+**The problem that had to be solved first:** Selene's brain is her memory graph and Isabella
+has no memory table, must not have one, and Hermes' gateway exposes no memory endpoint. So
+the brain is built out of what is actually on disk in `HERMES_HOME` - her curated memories,
+her sessions, and the messages in them - and named for what those are. Three kinds, told
+apart by value rather than hue, because violet marks LIVE and nothing else.
+
+**Effect:** the graph is real and thin. `memory.memory_enabled` is `false` on her instance,
+so the memory tier is empty: 0 memories, 15 sessions, 34 messages. The view prints that fact
+in words rather than letting a third of the volume be quietly absent. Importance is 0-10
+where an entry records one and `null` where it does not - `null` travels to the renderer,
+which draws it hollow and labels it `unrated`. Nothing defaults to 5.
+
+**Three adaptations the port needed**, each one a rule this repo already had:
+
+1. **Tailwind.** Selene styles `Brain3D` with `absolute inset-0`; Isabella has no Tailwind,
+   so that is an inert string, the host div collapses and the canvas renders 1x1. Same wall
+   `Body3D` hit when it was ported, and the fix is the same - `.brain3d__host` in
+   `styles.css`.
+2. **Edges resolve by id, not by title.** Selene keys on title because a memory's title is
+   its key. Sessions here are titled from their first message and two of them really are both
+   called "hello" - a title-keyed edge would have joined two unrelated conversations.
+3. **`importance` may be null**, so `radiusOf` sizes on `size` instead, which the server
+   guarantees is a real count for every kind.
+
+---
+
+### `Added` - two logs, because there were two things called "log" (the log half was reverted the same day - see above)
+
+**What:** `log` is what the **machine** did - Hermes' own `logs/*.log`, parsed into level,
+logger and text, newest first (`core/hermes/logs.py`, `GET /log`). `chat log` is what was
+**said** - the transcript, read back out of Hermes' `state.db` with the wait and the token
+cost beside each turn (`core/transcript.py`, `GET /chat/log`).
+
+**Why:** asking for "the log" was ambiguous, and the ambiguity was load-bearing in the wrong
+direction: the only log in the interface was `open logs`, which tails `agent.log` in
+Terminal.app. That is the right tool for watching it stream and useless for knowing what
+went wrong an hour ago. Meanwhile the transcript existed only for the current browser
+session and vanished on reload.
+
+**Effect:**
+
+- the level filter is a **floor**, not an equality - `log warnings` gets warnings, errors and
+  criticals, because that is what "what went wrong" means. Lines carrying no level of their
+  own (the body of a traceback) are never filtered out; the traceback is the error. The
+  counts shown are of everything, so what is being withheld stays visible.
+- the chat log prints three things a bare transcript does not: how long she took (her
+  timestamp minus the question's - 33s and 42s on real turns), what she was doing in the gap
+  (`reasoned 4,422 chars`), and what it cost. An empty reply with `finish_reason: length` is
+  named as the token-starvation error CLAUDE.md says it is, not shown as a blank turn.
+- **the floor is a command, not a control.** `log errors` / `log warnings` /
+  `log everything` are in the palette. The first draft of `views/Log.tsx` had a row of
+  buttons, which is exactly what CLAUDE.md forbids and for a reason that is not cosmetic -
+  the palette is the surface voice plugs into at M6.
+
+---
+
+### `Added` - reading Hermes' state.db, read-only
+
+**What:** `core/hermes/state.py` - sessions, messages and the curated memory store, read
+straight off disk. Opened `mode=ro` through a URI so a stray write is an error from SQLite
+rather than a corrupted agent.
+
+**Why:** Isabella stores no message content by design, so Hermes' database is the only copy
+of the transcript. Without reading it back there is no chat log and no brain.
+
+**Effect:** this is the second module coupled to Hermes' internals and the tighter of the
+two - `client.py` couples to an HTTP API, this couples to a **schema** that upstream can
+move. Mitigations, both deliberate: every column is named explicitly rather than `SELECT *`,
+so a removed column fails on one query with a legible message instead of silently shifting a
+tuple index; and `tests/test_mind.py` carries a cut-down copy of the schema, so the break
+lands in a test. Recorded as a decision in `ARCHITECTURE.md` rather than done quietly.
+
+Also: `active = 0` messages are excluded. Compression has folded those away - they are no
+longer in her context, and printing them would claim a conversation she has actually
+compacted.
+
+---
+
+### `Changed` - chat is no longer a view
+
+**What:** `views/Chat.tsx` is gone. Its state moved to `useChat.ts`, held once in `App` and
+shared: `home` has the box, `chat log` has the transcript.
+
+**Why:** two copies of that state would mean saying something on home and not seeing it in
+the log, which is the sort of split that makes a log untrustworthy.
+
+**Effect:** the box on home is deliberately **not** autofocused. An input with focus swallows
+every key the shell binds, including `K` - and `K` is how the kill switch is reached. `↵`
+puts the cursor in the box, `esc` takes it out, and the footer says both, because a key
+bound in silence is a key nobody presses. The first version had `autoFocus` on it and made
+the palette unreachable from the landing screen.
+
+**Also:** `Rings.tsx` was deleted as dead code and that was wrong - it is imported by
+`health`. Restored. It was unimported by `App`, which is not the same thing as unused.
+
+---
+
+
+### `Changed` - the body fills the window
+
+**What:** on `body` the shell drops its reading measure and becomes a full-height stage - the
+header across the top, the model filling everything under it, and bottom padding that clears
+the fixed footer so the figure is never cut off by it. Every other view keeps the 76ch column.
+
+**Why:** the measure exists for prose, and a 3D body is the one thing on this page that is
+not prose. Selene's body view is the whole screen for the same reason.
+
+`Body3D` needed no change: it observes its own host, so the scene reflowed into the new size
+on its own.
+
+### `Changed` - arrows step through the anatomy layers
+
+**What:** on the body, `←` and `→` cycle skin → muscle → skeleton, in the order the manifest
+ships them: outside inward, so right goes deeper and left comes back out. The footer names
+the keys and prints which layer is showing, since nothing else did.
+
+**Why:** Owen's - typing `skeleton` to compare two layers is three commands where a keypress
+does. The palette commands stay; they are what voice will use at M6, and a spoken "skeleton"
+should not require knowing how many presses away it is.
+
+Bound only on the body view and only when the atlas shipped more than one layer, so the keys
+are never live with nothing to do - the same rule as the palette's *nothing is listed that is
+not wired*.
+
+### `Added` - the anatomy atlas: skin, muscle and skeleton
+
+**What:** `web/public/anatomy/` - the three generated layers from Selene, 5.3 MB. `skeleton`,
+`muscle` and `skin` are palette commands, built from the manifest rather than hardcoded, so
+an uninstalled atlas offers no commands instead of commands that do nothing.
+
+**Why it was missing:** the primitives are the *fallback*, not the body. `Body3D` fetches
+`/anatomy/index.json` and falls back silently when it 404s - which is the right behaviour and
+also why nothing announced that the real meshes were absent. Isabella was rendering the
+stand-in and I described it as the model.
+
+**The credit is a requirement, not a nicety.** `muscle.json` and `skeleton.json` are
+Z-Anatomy under **CC BY-SA 4.0**, which wants attribution visible where the work is seen.
+The mesh carries `source` and `licence`, the component reports them, and the view now prints
+them in the corner. `skin.json` is MakeHuman, CC0. A test asserts the licence field still
+exists, because the credit can only reach the screen if the mesh still carries it.
+
+**A contract worth testing:** all twelve group ids the workout reader can produce -
+`chest`, `delt`, `tri`, `bi`, `forearm`, `core`, `lat`, `back`, `quad`, `ham`, `glute`,
+`calf` - resolve to real `.l`/`.r` regions in the 42-region muscle layer. If the atlas is
+ever regenerated with different names, muscles quietly stop lighting and nothing else fails.
+That test is the thing that would notice.
+
+### `Fixed` - the 3D body rendered nothing: Tailwind classes, in a repo with no Tailwind
+
+**What:** every `className` in the ported `Body3D.tsx` was a Tailwind utility - `absolute
+inset-0`, `pointer-events-none`, `text-[8.5px]`. Selene has Tailwind; Isabella does not, so
+those strings styled nothing, the host div collapsed to zero height, and `el.clientHeight ||
+1` sized the canvas **1x1**. It compiled, it ran, it drew a body one pixel across.
+
+The classes are now Isabella's own, defined in `styles.css`, meaning what the Tailwind ones
+meant. The component's own comment had already named the failure mode - *"the wrapper's size
+is set by CSS alone and the canvas only ever follows"* - which is exactly what stopped being
+true when the CSS went missing.
+
+**Why it survived every check I ran.** It type-checked, it built, Vite transformed the module,
+`three` resolved. A visual bug is invisible to all of those, and I reported it as unverified
+rather than working, which is the only part of this that went right. **A ported component
+carries its styling assumptions with it**, and those are exactly what a type system does not
+check.
+
+### `Changed` - the body view is the model and nothing else
+
+**What:** the panels are gone. `body` is the 3D figure, full height, with the component's own
+corner readout and one line when there is nothing to say. The numbers are still served at
+`GET /body`.
+
+**Why:** Owen's instruction - *"we should only have that 3D render of the body"* - and it
+matches how Selene's own body view works: the screen is the body, and the numbers are cards
+you summon rather than furniture around it.
+
+### `Changed` - the body is the 3D model, not a flat drawing
+
+**What:** `web/src/components/Body3D.tsx`, ported from Selene unchanged but for a header
+note, and `three` added to `web/`. The flat SVG figure it replaces is deleted.
+
+**Why not rewrite it:** it is Owen's own component and it has already been debugged against
+the specific things that make a body built from primitives read as a robot - the trunk as one
+lathed surface because *the taper is the silhouette*, pads re-lathed from the trunk's own
+profile because a flat slab renders as a belt buckle, limbs sized to real landmarks after a
+first pass left the shins ending 10 cm above the feet. None of that is visible in the output
+and all of it would have had to be re-earned.
+
+**What the model unlocked, which is not just fidelity.** It turns, so the back is drawable -
+and the flat figure's honest limitation went with it. `Lat Pulldown` used to light nothing
+because a front view cannot show a lat. The keyword map now covers lats, back, biceps,
+forearms, hamstrings and glutes.
+
+**A second substring bug, found while adding them.** Unioning every keyword that appears in a
+name meant `Leg Curl` lit a **bicep**, because "curl" is inside it - the same shape as the
+`push`/`Pushdown` bug from the flat version. The rule is now **longest keyword wins, and wins
+alone**: the most specific phrase that matches is the one describing the movement. Both traps
+are parametrised tests, named after the exercises that actually caused them.
+
+The lookup in the model resolves a bare group to both sides (`map[id] ?? map[bare]`), so the
+reader's ids need no translation - `chest` lights `chest.l` and `chest.r`.
+
+**Not verified by eye.** The Chrome extension has been disconnected for this whole stretch,
+so the scene has been confirmed only as far as tooling reaches: it type-checks, it builds,
+Vite transforms the module, and `three` resolves. Nobody has watched it turn. Recorded rather
+than glossed, because a 3D scene is exactly the kind of thing that compiles perfectly and
+renders as a black rectangle.
+
+### `Fixed` - `body` is Owen's body; `health` is her system health
+
+**What:** the view built as "Body" was her runtime. It is now **health**. **body** is a new
+view of Owen's physical body, read out of the vault: `core/body.py`, `GET /body`, and a
+front-view figure whose muscle groups light from the workout log.
+
+**Why:** I had the mapping backwards. Asked for Selene's body dashboard, I reasoned from
+*"Isabella has no health data"* to *"so make body about her"* - and then built exactly that
+without checking whether the data existed somewhere. It does. `Personal/Body` in the vault
+has been there the whole time: weight and water per day, sleep per night, a weekly workout
+rotation ticked as it goes, and a girth table with left and right columns.
+
+**What the figure shows.** The drawing is Owen's own, adapted from `dashboard-body.html`, and
+its group ids are the strings the reader produces - so a ticked line lights a muscle with no
+mapping table in between. Lit means *worked this week, from an exercise actually ticked*.
+
+**The rule carried over from Selene's `body.ts`, and it is the important one: nothing fills a
+gap.** An unlogged measure comes back `null` and the view prints *not logged*, never a zero
+and never last week's number carried forward. Every measure shows the day it was written, so
+today's screen says weight **67.5 kg, 7 days ago** rather than implying he weighed himself
+this morning. A dashboard that smooths over a missing day is telling a story, and the subject
+here is a real person's health.
+
+**A bug the tests caught before the screen did:** `"push"` was a keyword in the
+exercise-to-muscle map, so *Cable Tricep Pushdown* lit chest and delts. A pushdown is not a
+press. The lesson is general to substring maps - a key that is a word occurring inside other
+words is a false positive waiting for a plausible-looking log line. Every exercise name in
+the real log now maps correctly, and *Lat Pulldown* correctly lights nothing, because the
+figure is a front view and cannot honestly show a back.
+
+**Where it stands today:** W35 is written but untouched, so the figure is unlit and the panel
+says so. That is the correct screen for a week with nothing ticked.
+
+### `Added` - the display, and what it is not
+
+**What:** `web/src/Rings.tsx`, centre stage in the Body view. Concentric rings, 72 radial
+ticks turning once every 160 seconds, one violet arc, and a soft violet radial behind the
+mark. Inline SVG - no `three`, no dependency added for a drawing.
+
+**Why it is rings and not a figure.** Selene's body dashboard puts an anatomical figure here
+and lights the muscle groups she has worked. That form is not available to Isabella, and the
+reason is characterisation rather than data: **she had a body for twenty-four years and does
+not have one now.** Drawing her a live one is the present-tense lie [[BIOGRAPHY]] draws the
+line at - *"a memory versus a lie"* - and a dim silhouette would be the haunted reading
+[[CLAUDE]] rules out just as firmly. Rings say what she is now without claiming what she
+isn't.
+
+**Two rules it is built to, both checkable.** The arc is a *real quantity* - today's runs
+against `max_runs_per_day`, a real ratio out of a real budget - because a ring whose length
+means nothing is refused however good it looks. And the glow is for **live** only: a spent
+allowance gets the violet arc, not the light, or the light stops meaning anything. It is the
+single exception to *no glow, anywhere* that [[The HUD]] grants.
+
+The arc maths was checked numerically rather than by eye, which caught the two cases that
+usually ship broken: a zero fraction draws nothing rather than a dot artifact, and a full
+ring stops 0.1 units short of its own start, because an arc whose ends coincide renders as
+nothing at all.
+
+### `Changed` - say the noun, get the view; and nothing announces the others
+
+**What:** palette commands for views are now the bare word - `body`, not `show body`. The row
+of view names is gone from the header, and the footer is down to `K`.
+
+**Why:** Owen asked for both. The verb was a word he had to remember in order to be obeyed,
+and it is the string voice will hand over unchanged at M6, so the label should be the word
+itself. The view row was a tab bar with the buttons taken off - it announced four places to
+go in an interface whose whole premise is that you say where you want to be.
+
+The number keys `1`-`5` still work. They are simply no longer advertised, which is the
+difference between a shortcut and a navigation bar.
+
+### `Added` - she can open a terminal, on four named targets and nothing else
+
+**What:** `core/desktop.py`, `GET /desktop`, `POST /desktop/open/{name}`. Opens Terminal.app
+via AppleScript on one of: her agent log, her error log, her gateway log, or the newest
+briefing as Hermes wrote it. Owen's ask, verbatim: *"open logs, which should start a terminal
+that listens to our session logs."*
+
+**Why it needed a decision rather than a commit.** This is the first path in Isabella that
+executes anything on the host, and [[PERMISSIONS]] P0 removed `terminal` and `code_execution`
+from every Hermes platform on purpose - *capability removed, not sandboxed* - with no Docker
+on this machine to fall back on. `CLAUDE.md` says a capability that can execute is an
+explicit decision, not a default-on convenience.
+
+**What makes it narrow enough to exist:** the caller sends a **name**, and the command is a
+constant looked up in a table. Nothing composes a command from a request or from a model's
+output; an unknown name is a 404. Every target is `tail` or `cat`, and a test asserts that
+over the whole table, so a future target that writes fails the suite. It never touches
+Hermes - her floor is unchanged and the 07:00 path still has `platform_toolsets.cron: []`.
+Recorded in [[ARCHITECTURE]] §Opening a terminal, with what would change the answer.
+
+**Effect:** `open logs` in the palette puts a live `tail -f` on her agent log in a real
+Terminal window. Verified by running it - the window opened on the first try. macOS-only, and
+it says so rather than throwing on other hosts.
+
+### `Changed` - the UI has no buttons; everything is a command
+
+**What:** `K` opens a palette; `1`-`5` switch views. Every button is gone - triggers, Google,
+chat, even the tabs, which are now a non-interactive row naming the keys. Zero `<button>`
+elements and zero `onClick` handlers outside the palette itself.
+
+**Why:** Owen wants voice control. Voice is M6 and she has no STT or TTS, so the step that
+is actually available now is the one underneath it: **a command router**. When speech
+arrives it feeds the same list rather than needing a second control surface built beside it.
+Buttons would have been the thing to throw away.
+
+**The rule the palette is built to**, taken from Selene's own: *nothing is listed that is not
+wired, because a palette of plausible-sounding commands is a worse lie than no palette.* So
+commands are generated from live state - the triggers that exist, the desktop targets that
+exist, whether Google is connected - never from a hardcoded menu.
+
+**The thing this must not lose, and does not:** the kill switch. `pause daily-briefing` is a
+command, the Triggers view prints it on the row it belongs to, and revoking the Google grant
+still takes two deliberate picks. A UI with no way to stop an unprompted process would have
+been a regression dressed as a style choice.
+
+### `Added` - a Body view, about her rather than about Owen
+
+**What:** `GET /runtime` and a fourth view. Model, reply cap, patience, gateway, timezone,
+runs fired today, persona sha and drift, and what is on disk.
+
+**Why:** Owen asked for Selene's body dashboard. Hers reads a person - resting heart rate,
+body fat, hydration, last night's sleep - fed by `body.ts` and `health.ts`. **Isabella has no
+health data and no source for any**, and building those panels empty would be exactly the
+wall of telemetry [[The HUD]] warns about. She has a physiology of her own instead, and every
+number in it is one she actually holds.
+
+The panel worth reading twice is *memory on disk*: Hermes' `state.db` at 468 KB against her
+own database at 24 KB. That gap is the prime directive being true rather than merely
+asserted - the transcripts are his, and she stores no message content at all.
+
+### `Decided` - the HUD is the destination, not the next step
+
+**What:** Owen asked for the HUD dashboard from `vault/Projects/selene/Design`. Not built.
+The command palette and the panel register were built instead.
+
+**Why:** the HUD note answers this itself, and the answer is Owen's own: *"Voice isn't a
+multiplier on this design - it's the premise. A HUD with no voice is a wall of telemetry with
+nothing to talk to."* It offers two branches, and picks the one where earlier phases ship the
+conversation-first layout and **the HUD arrives with voice**: *"the second is cheaper and
+probably right."*
+
+Second reason, particular to Isabella: the HUD's panels are machine telemetry, a memory
+graph, a day track, todos and surfaced items. She has four things - runs, triggers, Google,
+chat. The chrome would have been mostly empty, which is the same lie as an unwired palette
+command.
+
+What did land is the register - corner-bracketed panels, tick-tight mono rows - applied only
+where there is real data behind it.
+
+### `Changed` - the web UI follows Selene's design system
+
+**What:** `web/` restyled against `vault/Projects/selene/Design` - `Color Theme.md` and
+`Visual Style.md`. The tokens are theirs verbatim, contrast measurements included: eleven
+values, seven of them the same violet-leaning grey at different heights, one accent
+(`#B28BFF`), three signals. Two faces split by **who is speaking** - a humanist sans for
+Isabella, mono for the machine, so cron expressions, ids, scopes and timestamps are mono and
+her briefings are not. Tabs underline rather than fill; dense rows take bold foreground and
+never a filled band; borders are structure; there are no shadows, no glow, no icon set.
+
+**Why:** Owen's instruction, and the system is worth inheriting - it is written with reasons
+rather than values, which is the same standard the rest of this repo is held to.
+
+**What was deliberately not taken: the moth.** `Color Theme.md` says it plainly - *"It is
+Selene herself"*, and it is never violet because she is not a thing on screen that matters.
+Giving Isabella another entity's identity mark would be the visual version of the fabricated
+callback rule in `CLAUDE.md`. She uses the geometric presence mark instead: `○` idle,
+`×` thinking, `✦` working, in the state colours from the same table.
+
+**Effect:** the one-colour discipline now holds and is checkable - the violet appears in
+exactly four places, and all four are *live*: the thinking mark, the working mark, a running
+badge, and a trigger's next run. Everything static is grey. Three things were caught by
+looking rather than by building: the active tab inherited the button's 4px radius and read as
+a floating pill; an inline `<code>` inside a column-flex step broke its own sentence across
+three lines; and `8/27/2026, 7:00:00 AM` was the wrong register for a mono row, now
+`2026-08-27 07:00`.
+
+Verified in the browser across all four views, including a real reply - *"Sir. Not any
+more."* in 58.4s - which is where the type split earns itself: her words in silver, Owen's
+recessed in `muted`.
+
+### `Added` - a Connect Google panel, and the standing grant it creates
+
+**What:** A fourth view in `web/`, plus `core/hermes/google_auth.py` and four routes
+(`GET /google`, `POST /google/connect` · `/complete` · `/disconnect`). It drives the
+google-workspace skill's own `setup.py`: consent link, approve in a browser, paste the
+redirected URL back once. Scopes are `gmail.readonly` + `calendar.readonly` - decided, not
+defaulted, and this build of the skill pins them with no flag to widen.
+
+**Why:** [[ARCHITECTURE]] §Open decision deferred this saying *"once the web UI exists there
+is somewhere to put a proper Connect Google button."* The UI now exists, and Google
+authorisation is the last thing between the briefing and a real morning.
+
+**One correction that shaped the whole design.** The request was for the Firebase/Supabase
+pattern - sign in with Google, keep the token in a cookie. **A cookie cannot work here.** The
+briefing fires at 07:00 with no browser open and nobody logged in; a session token in the
+browser is unreachable at exactly the moment she needs it. The grant had to be a refresh
+token on disk in her `HERMES_HOME`. Recorded because it is the kind of mistake that would
+have looked fine in testing - every manual check happens with a browser open - and failed
+only at 07:00, unattended, in the one path nobody watches.
+
+**Effect:** she can be connected in about a minute without a terminal. Two properties held
+deliberately: `HERMES_HOME` is passed explicitly rather than inherited, so a grant cannot
+land in Selene's directory; and the pasted redirect URL is a live credential, so it is never
+logged - verified by grepping the API log after a failed exchange, which recorded the failure
+and not the code. Revocation sits in the same panel behind a two-step confirm, because the
+end of a standing grant should not be a remembered command.
+
+**Not yet connected.** The mechanism is built and the consent URL is real - correct scopes,
+`access_type=offline`, PKCE S256. Approving it means signing into Owen's Google account,
+which is his to do.
+
+### `Added` - a web UI, and the briefing is readable at last
+
+**What:** `web/` - React, TypeScript, Vite, pnpm. Three views: **Briefings** (the landing
+page - every run with what she actually said), **Triggers** (schedule, next run, today's
+allowance, and pause as the kill switch), and **Chat**. Backing it: `core/hermes/outbox.py`,
+a `briefing` field on `GET /runs`, CORS for the Vite dev server, and
+`X-Hermes-Session-Id` / `X-Hermes-Session-Key` on the chat path.
+
+**Why:** The briefing had been composed and delivered every weekday morning **into a file
+nobody opened**. `deliver: local` writes
+`~/.hermes-isabella/cron/output/<job_id>/<timestamp>.md`; nothing read it. The pipeline was
+finished and the last three feet were missing.
+
+This is [[ROADMAP]] **M3 started before M2's done-when was met**, which the sequencing rule
+forbids. Recorded rather than glossed: it was Owen's call, made with the tradeoff stated -
+a page you have to visit is not a briefing that *arrives*, and delivery is still `local`.
+
+**Effect, and one thing that had to be decided:** the jobs API carries an execution's status
+and **not its output**, so there was no HTTP route to the text. Reading Hermes' output
+directory won over storing the text in `runs`, which would have been a second message store
+([[DATA]] forbids it). It is the first *filesystem* coupling to Hermes, so it sits in
+`core/hermes/` with the client - see [[ARCHITECTURE]] §Data and state. Nothing is cached;
+Isabella's database still holds no message content.
+
+Verified against the live stack, not mocked: `/runs` returns the real 2026-08-26 briefing;
+chat answered *"I'm Isabella Marisol Aguirre. I died two weeks ago. I don't have a body
+now."* in **61.1s** - right tense, right restraint; the built bundle contains no Hermes key.
+
+### `Fixed` - two things the docs had wrong
+
+**What:** [[ROADMAP]] said the briefing job was **paused**. It is not, and has not been -
+it is active and fires 07:00 weekdays, next `2026-08-27`. Corrected.
+
+And `hermes cron list` **hides paused jobs entirely** - it prints "No scheduled jobs" rather
+than showing the job as paused. `--all` shows it. That matters because `cron list` is the
+command used to verify the kill switch: pausing correctly and then reading "no scheduled
+jobs" looks exactly like the job having been deleted.
+
+**How it was caught:** pausing from the new UI, then checking Hermes and seeing the job
+apparently gone. It had not gone - `--all` showed `[paused]`, and resume restored
+`next_run_at`. The kill switch works end to end; the verification command was the misleading
+part.
 
 ### `Decided` - calendar and email arrive as pre-fetched context, not as tools
 

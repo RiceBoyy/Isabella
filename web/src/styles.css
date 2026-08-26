@@ -1,0 +1,847 @@
+/* Isabella's interface.
+ *
+ * Follows the design system in vault/Projects/selene/Design - `Color Theme.md`
+ * and `Visual Style.md`. The tokens below are theirs, unchanged, including the
+ * contrast measurements; what is not theirs is the moth, which is Selene's own
+ * identity and stays with her. The presence mark here is the geometric one.
+ *
+ * The rules that shape everything below, in the order they get broken:
+ *
+ *   1. One colour. `--mark` marks what is LIVE - a reply in flight, a trigger
+ *      firing. Static structure is grey. If the screen is mostly violet,
+ *      nothing on it is actually happening.
+ *   2. Emphasis ladder, cheapest first: weight -> colour -> rule -> fill. The
+ *      denser the row, the lighter the treatment. Tabs underline; they never
+ *      take a filled background.
+ *   3. Two faces, split by WHO IS SPEAKING. Sans is Isabella talking. Mono is
+ *      the machine - cron expressions, ids, paths, scopes, timestamps.
+ *   4. Two densities and nothing between them. Prose is loose; data is tight.
+ */
+
+:root {
+  /* Ground and text. Every dark step carries a blue-violet lift; a neutral
+     grey reads as equipment, this reads as a room with a screen on in it. */
+  --night:   #16161C;
+  --field:   #22222A;
+  --surface: #2C2C35;
+  --edge:    #3A3A42;
+  --muted:   #8A8A95;   /* 4.6:1 on field - never on surface */
+  --muted-s: #9696A1;   /* 4.7:1 on surface, for when it must be */
+  --text:    #D1D1D1;   /* this is the silver. most of the pixels. */
+  --bright:  #F2F2F4;
+
+  --mark:    #B28BFF;   /* the only colour */
+
+  --success: #66D9A3;
+  --warning: #F4C95D;
+  --error:   #FF6B7A;
+
+  /* Space - 4px base, 2-unit rhythm. The gap between two things is the only
+     thing that says how related they are. */
+  --s1: 4px; --s2: 8px; --s4: 16px; --s6: 24px; --s10: 40px; --s16: 64px;
+
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Inter", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+          "Liberation Mono", monospace;
+
+  /* Motion she initiates is slow; motion answering Owen is instant. */
+  --reactive: 110ms;
+  --transition: 200ms;
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--night);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+}
+
+code, .mono { font-family: var(--mono); font-size: 13px; line-height: 1.4; }
+
+/* ─────────────────────────────────────────────────────────────
+   Shell
+   ───────────────────────────────────────────────────────────── */
+
+.shell { max-width: 76ch; margin: 0 auto; padding: var(--s10) var(--s6) var(--s16); }
+
+.shell__top {
+  display: flex;
+  align-items: center;
+  gap: var(--s6);
+  flex-wrap: wrap;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--edge);
+  margin-bottom: var(--s10);
+}
+
+.shell__name {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text);
+  padding-bottom: var(--s4);
+}
+
+.shell__top nav { display: flex; gap: var(--s4); margin-left: auto; }
+
+/* Tabs: foreground and an underline, never a background. A fill would break
+   the terminal-native look the whole system inherits. */
+.tab {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  /* Flush with the header rule, and square: an underline with rounded ends
+     reads as a floating pill rather than as the active tab. */
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 0 0 var(--s4);
+  margin-bottom: -1px;
+  cursor: pointer;
+  transition: color var(--reactive) ease-out;
+}
+.tab:hover { color: var(--text); }
+.tab--on { color: var(--bright); font-weight: 500; border-bottom-color: var(--muted); }
+
+/* ── The presence mark. One place, never moves. ────────────────
+   `○` idle · `×` thinking · `✦` working. Violet only while she is
+   actually doing something; grey the rest of the time. */
+.presence { display: flex; align-items: center; gap: var(--s2); padding-bottom: var(--s4); }
+.presence__mark {
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+}
+.presence__state {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.presence--live .presence__mark { color: var(--mark); animation: breathe 4.5s ease-in-out infinite; }
+.presence--working .presence__mark { color: var(--mark); animation: breathe 6s ease-in-out infinite; }
+.presence--error .presence__mark,
+.presence--error .presence__state { color: var(--error); }
+.presence--wait .presence__mark { color: var(--warning); }
+
+@keyframes breathe {
+  0%, 100% { opacity: .45; }
+  50%      { opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Shared
+   ───────────────────────────────────────────────────────────── */
+
+/* Words where words fit - there is no icon set. A status colour never appears
+   without its word beside it; a coloured dot alone is a puzzle. */
+.badge {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.badge--ok::before,
+.badge--error::before,
+.badge--paused::before,
+.badge--running::before,
+.badge--unknown::before { content: "● "; font-size: 10px; }
+.badge--ok::before { color: var(--success); }
+.badge--error::before, .badge--unknown::before { color: var(--error); }
+.badge--paused::before { color: var(--warning); }
+.badge--running::before { color: var(--mark); }
+
+.muted { color: var(--muted); font-size: 14px; }
+
+/* An empty state is a line of muted text saying what would go there. No
+   illustration, no cheerful sentence. */
+.notice { color: var(--muted); font-size: 14px; line-height: 1.5; }
+.notice--bad { color: var(--error); }
+
+button {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  background: none;
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  padding: var(--s2) 14px;
+  cursor: pointer;
+  transition: border-color var(--reactive) ease-out, color var(--reactive) ease-out;
+}
+button:hover:not(:disabled) { color: var(--bright); border-color: var(--muted); }
+button:disabled { color: var(--muted); opacity: .5; cursor: default; }
+button.danger { color: var(--muted); }
+button.danger:hover:not(:disabled) { color: var(--error); border-color: var(--error); }
+
+input {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--field);
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  padding: 10px 12px;
+  transition: border-color var(--reactive) ease-out;
+}
+input::placeholder { color: var(--muted); }
+input:focus { outline: none; border-color: var(--muted); }
+
+a { color: var(--text); text-decoration-color: var(--edge); text-underline-offset: 3px; }
+a:hover { color: var(--bright); }
+
+.actions { display: flex; gap: var(--s2); }
+
+/* ─────────────────────────────────────────────────────────────
+   Briefings — LOOSE. What she wrote, unprompted.
+   ───────────────────────────────────────────────────────────── */
+
+.briefings { list-style: none; display: flex; flex-direction: column; gap: var(--s10); }
+
+/* No card, no fill. The gap between entries is what separates them - if they
+   needed a border to look separate, the space above them was wrong. */
+.briefing__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  margin-bottom: var(--s2);
+}
+.briefing__when {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 400;
+}
+.briefing__who {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-left: auto;
+}
+/* Prose caps well short of the full width. She talks in paragraphs now. */
+.briefing__text { max-width: 68ch; white-space: pre-wrap; }
+
+/* ─────────────────────────────────────────────────────────────
+   Triggers — TIGHT. Data, and the kill switch.
+   ───────────────────────────────────────────────────────────── */
+
+.triggers { list-style: none; display: flex; flex-direction: column; gap: var(--s10); }
+
+.trigger__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s4);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--edge);
+  margin-bottom: var(--s2);
+}
+.trigger__id {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+.trigger__head .badge { margin-left: auto; }
+
+/* Dense rows: label left, value right, mono throughout, 3px apart. Bold
+   foreground carries emphasis - never a filled band. */
+.rows { display: flex; flex-direction: column; gap: 2px; margin-bottom: var(--s4); }
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s2);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 3px 0;
+  color: var(--muted);
+}
+.row b { font-weight: 400; color: var(--text); }
+.row--live b { color: var(--mark); }
+
+.warn {
+  font-size: 14px;
+  color: var(--warning);
+  border-left: 2px solid var(--warning);
+  padding-left: var(--s2);
+  margin-bottom: var(--s4);
+}
+.warn code { color: var(--text); }
+
+/* ─────────────────────────────────────────────────────────────
+   Google
+   ───────────────────────────────────────────────────────────── */
+
+.google { display: flex; flex-direction: column; gap: var(--s4); max-width: 68ch; }
+.google__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s4);
+  padding-bottom: var(--s2);
+  border-bottom: 1px solid var(--edge);
+}
+.google__title {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.google__head .badge { margin-left: auto; }
+
+.scopes { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.scopes li {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  padding: 3px 0;
+}
+.scopes span { color: var(--muted); }
+
+.steps { list-style: none; display: flex; flex-direction: column; gap: var(--s6); }
+.steps li { display: flex; gap: var(--s4); }
+.steps__n {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  flex: none;
+  padding-top: 3px;
+}
+/* A block, not a column flex: inline <code> inside a sentence must stay
+   inline, or the sentence breaks around it. */
+.steps__body { display: block; min-width: 0; flex: 1; }
+.steps__body > * + * { margin-top: var(--s2); }
+/* Later steps sit in muted until the one above has produced something - the
+   order matters, and a flat list invites pasting before consenting. */
+.steps--later .steps__body { color: var(--muted); }
+.paste { display: flex; gap: var(--s2); }
+.paste input { flex: 1; min-width: 0; }
+
+/* ─────────────────────────────────────────────────────────────
+   Chat — LOOSE. Where she talks.
+   ───────────────────────────────────────────────────────────── */
+
+.chat { display: flex; flex-direction: column; gap: var(--s10); }
+.chat__log { display: flex; flex-direction: column; gap: var(--s6); }
+
+.turn { max-width: 68ch; }
+.turn__who {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: var(--s2);
+}
+.turn p { white-space: pre-wrap; }
+/* What Owen said is recessed - hers is the voice on the page. */
+.turn--owen p { color: var(--muted); }
+.turn__meta {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  opacity: .7;
+  margin-top: var(--s1);
+}
+
+.chat__compose { display: flex; gap: var(--s2); max-width: 68ch; }
+.chat__compose input { flex: 1; min-width: 0; }
+
+::-webkit-scrollbar { width: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--edge); border-radius: 6px; }
+
+/* Honoured completely: ambient loops stop, transitions become cuts. Nothing is
+   lost - none of the motion carries information the words don't already. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+  .presence--live .presence__mark { opacity: 1; }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   The HUD register — panels with corner brackets, from
+   dashboard-hud.html. Used where there is real data behind them.
+   ───────────────────────────────────────────────────────────── */
+
+.panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
+  gap: var(--s4);
+}
+.panels--one { grid-template-columns: minmax(0, 68ch); }
+
+.panel { position: relative; border: 1px solid var(--edge); padding: var(--s4); }
+/* Corner brackets rather than a filled card: structure that reads as an
+   instrument without adding a second elevation step. */
+.panel::before, .panel::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-color: var(--muted);
+  border-style: solid;
+  opacity: .7;
+}
+.panel::before { top: -1px; left: -1px; border-width: 1px 0 0 1px; }
+.panel::after { bottom: -1px; right: -1px; border-width: 0 1px 1px 0; }
+
+.panel__title {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: var(--s4);
+}
+.panel .prose { margin-bottom: var(--s4); }
+.panel .steps { margin-top: var(--s4); }
+.panel .notice { margin-top: var(--s4); }
+
+/* ── Footer: keys named in words, and the last thing she did ──── */
+
+.shell__foot {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: var(--s4);
+  align-items: baseline;
+  padding: var(--s2) var(--s6);
+  background: var(--night);
+  border-top: 1px solid var(--edge);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+.foot__keys b { color: var(--text); font-weight: 400; }
+/* What she just did. Ephemeral on purpose - a line that accumulates is a
+   transcript wearing a disguise. */
+.foot__said { color: var(--text); margin-left: auto; }
+
+/* ── The palette. The only control surface there is. ──────────── */
+
+.palette {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 14, .6);
+  display: flex;
+  justify-content: center;
+  padding-top: 12vh;
+  z-index: 10;
+}
+.palette__box {
+  width: min(56ch, calc(100vw - var(--s10)));
+  height: fit-content;
+  background: var(--field);
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.palette__box input {
+  width: 100%;
+  font-size: 14px;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--edge);
+  border-radius: 0;
+  padding: 14px var(--s4);
+}
+.palette__list { list-style: none; max-height: 52vh; overflow-y: auto; }
+
+/* Sparse rows, so the ladder allows a filled band on the selected one -
+   the only fill in this interface, and it is earned. */
+.palette__row { padding: var(--s2) var(--s4); cursor: pointer; }
+.palette__row--on { background: var(--surface); }
+
+.palette__label {
+  display: block;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+}
+.palette__row--on .palette__label { color: var(--bright); }
+/* A sentence, not a command. Violet on the label because this is the one row
+   whose text is hers to answer rather than the interface's to run - and it is
+   live in the sense the colour rule means: pressing Enter starts her thinking. */
+.palette__row--ask .palette__label,
+.palette__row--ask.palette__row--on .palette__label { color: var(--mark); }
+/* Sans, in a list that is otherwise mono. The two faces split by WHO IS
+   SPEAKING: every other row is a thing the machine will do, this one is a
+   sentence a person is about to say. It is the only row in the interface
+   where that flip happens, and it does the explaining that a second input
+   box used to do badly. */
+.palette__row--ask .palette__label { font-family: var(--sans); font-size: 14px; }
+.palette__sub { display: block; font-size: 12px; color: var(--muted-s); }
+.palette__none { color: var(--muted); font-family: var(--mono); font-size: 13px; }
+
+.prose { max-width: 68ch; }
+
+/* Where a button used to be, the command that replaced it. */
+.hint { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: var(--s2); }
+.hint code { color: var(--text); }
+
+/* ─────────────────────────────────────────────────────────────
+   The display. Centre stage, and the only drawing here.
+   ───────────────────────────────────────────────────────────── */
+
+.rings {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(26rem, 70vw);
+  aspect-ratio: 1;
+  margin: 0 auto var(--s10);
+}
+
+/* The single exception to "no glow, anywhere", granted by the HUD note: one
+   soft violet radial behind the centre, and nowhere else. No bloom on text,
+   no halo on borders, no glowing panels. */
+.rings__glow {
+  position: absolute;
+  width: 62%;
+  height: 62%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(178, 139, 255, 0.09), transparent 65%);
+}
+
+.rings__svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* Ambient, and slow enough to be peripheral - if your eye goes to it while
+   you are reading, it is too fast. */
+.rings__ticks { transform-origin: 50% 50%; animation: turn 160s linear infinite; }
+@keyframes turn { to { transform: rotate(360deg); } }
+
+.rings__centre {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s1);
+  text-align: center;
+}
+.rings__mark {
+  font-family: var(--mono);
+  font-size: 28px;
+  line-height: 1;
+  color: var(--muted);
+  margin-bottom: var(--s2);
+}
+.rings--thinking .rings__mark,
+.rings--working .rings__mark { color: var(--mark); animation: breathe 4.5s ease-in-out infinite; }
+.rings--error .rings__mark { color: var(--error); }
+.rings--wait .rings__mark { color: var(--warning); }
+
+.rings__caption {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--text);
+}
+.rings__legend {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+/* A number that was never written must not look like a number. */
+.absent { color: var(--muted); }
+.row__when { color: var(--muted); opacity: .75; }
+
+/* A bar only where there is a real quantity against a real budget. */
+.meter { height: 2px; background: var(--edge); margin-top: var(--s2); }
+.meter span { display: block; height: 100%; background: var(--mark); }
+
+
+/* ─────────────────────────────────────────────────────────────
+   The stage — the body view is the model, full height.
+   ───────────────────────────────────────────────────────────── */
+
+/* Full bleed. Everything else on this page is held to a reading measure;
+   the body is the one thing that wants the whole window. */
+.shell--stage {
+  max-width: none;
+  height: 100vh;
+  /* Clears the fixed footer, so the model is never cut off by it. */
+  padding: var(--s6) var(--s6) 2.25rem;
+  display: flex;
+  flex-direction: column;
+}
+.shell--stage .shell__top { margin-bottom: var(--s4); }
+.shell--stage main { flex: 1; min-height: 0; }
+
+.stage {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.stage__glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 26rem;
+  height: 26rem;
+  margin: -13rem 0 0 -13rem;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(178, 139, 255, 0.09), transparent 65%);
+}
+.stage__note {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+/* CC BY-SA wants the credit where the work is seen, not in a README. */
+.stage__credit {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: var(--muted);
+  opacity: .7;
+}
+
+/* Body3D styles itself with Tailwind in Selene. These are the same rules,
+   named for this repo - without them the host collapses and the canvas is
+   sized 1x1, which renders as nothing at all. */
+.body3d { position: absolute; inset: 0; }
+.body3d__host { position: absolute; inset: 0; }
+.body3d__readout {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  pointer-events: none;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  color: var(--muted);
+}
+.body3d__where { font-style: normal; font-variant-numeric: tabular-nums; opacity: .8; }
+.body3d__hints { display: flex; align-items: baseline; gap: var(--s2); }
+.body3d__facing { font-style: normal; color: var(--mark); }
+.body3d__keys { font-style: normal; opacity: .5; }
+
+/* ─────────────────────────────────────────────────────────────
+   The core — home. The brain in its instrument frame, with the box
+   you talk to her in underneath.
+
+   Two layers, and they are separate on purpose: the VOLUME is WebGL
+   because it turns, the FRAME is SVG on top because it does not.
+   Selene's HUD is the same screen; see views/Home.tsx.
+   ───────────────────────────────────────────────────────────── */
+
+.core { position: relative; height: 100%; min-height: 0; overflow: hidden; }
+
+/* The two corner readouts. Mono, because every number in them is the
+   machine speaking. */
+.core__readout {
+  position: absolute;
+  top: 0;
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.8;
+  letter-spacing: 0.15em;
+  color: var(--muted);
+  z-index: 2;
+  pointer-events: none;
+}
+.core__readout--left { left: 0; }
+.core__readout--right { right: 0; text-align: right; }
+/* Violet inside the readouts is strictly the live quantity — what she is
+   doing, and what is in context. Not the labels. */
+.core__readout b { font-weight: 400; color: var(--mark); }
+
+.core__stage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(742px, 92vw);
+  height: min(636px, 62vh);
+  transform: translate(-50%, -50%);
+  transition: transform 400ms var(--transition, 200ms) ease-out;
+}
+.core__stage--thinking { transform: translate(-50%, -50%) scale(1.04); }
+
+/* The single exception to "no glow, anywhere" — one soft radial behind the
+   centre, and only while something is actually happening. A glow at rest
+   would make LIVE mean nothing. */
+.core__glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 560px;
+  height: 560px;
+  max-width: 90%;
+  max-height: 90%;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(178, 139, 255, 0.16), transparent 66%);
+  animation: breathe 3.2s ease-in-out infinite;
+}
+
+/* Ignores the pointer so the brain underneath can be dragged through it. */
+.core__frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+.core__spin { transform-origin: 250px 250px; animation: turn 90s linear infinite; }
+.core__spin-rev { transform-origin: 250px 250px; animation: turn 140s linear infinite reverse; }
+.core__sweep { transform-origin: 250px 250px; animation: turn 6s linear infinite; }
+
+/* Rings falling inward while she thinks, staggered so one is always
+   mid-flight. Nothing here is bound to progress — she does not know how long
+   she will take, and a bar that pretends otherwise is the lie this screen is
+   built to avoid. */
+.core__think {
+  transform-origin: 250px 250px;
+  animation: fall 1.9s ease-in infinite;
+}
+@keyframes fall {
+  from { transform: scale(1); opacity: .55; }
+  to   { transform: scale(.42); opacity: 0; }
+}
+
+.core__legend {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  gap: var(--s4);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  pointer-events: none;
+}
+.core__legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* The legend's marks are the graph's own colours. Kinds are told apart by
+   VALUE, not hue — violet is LIVE and nothing else. */
+.dot { width: 5px; height: 5px; border-radius: 50%; display: inline-block; }
+.dot--mark { background: var(--mark); }
+.dot--memory { background: var(--text); }
+.dot--session { background: var(--muted); }
+.dot--message { background: #6E6E79; }
+.dot--hollow { background: none; border: 1px dashed var(--muted); width: 6px; height: 6px; }
+
+.core__under {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s2);
+  padding: 0 var(--s10) var(--s4);
+}
+.core__note, .core__under .notice { max-width: 62ch; text-align: center; font-size: 13px; }
+.core__said {
+  max-width: 62ch;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.core__wait {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--mark);
+  animation: breathe 4.5s ease-in-out infinite;
+}
+
+.core__hint {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+}
+
+.core__stats {
+  display: flex;
+  gap: var(--s4);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+.core__stats b { font-weight: 400; color: var(--text); }
+
+/* Brain3D styles itself with Tailwind in Selene, the same trap Body3D had.
+   Without a host with real height the canvas is sized 1x1 and nothing
+   appears at all. */
+.brain3d__host { position: absolute; inset: 0; }
+
+/* ─────────────────────────────────────────────────────────────
+   `chat` — the transcript. There is no log view; logs are terminals.
+   ───────────────────────────────────────────────────────────── */
+
+.chatlog { display: flex; flex-direction: column; gap: var(--s10); }
+
+.convo { display: flex; flex-direction: column; gap: var(--s4); }
+.convo__head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+.convo__head h2 { font-size: 16px; font-weight: 500; color: var(--bright); }
+.convo__when, .convo__id { font-size: 12px; color: var(--muted); }
+.convo__id { opacity: .7; }
+
+/* A rule, not a fill — the emphasis ladder, cheapest treatment that works. */
+.convo--live { border-left: 1px solid var(--mark); padding-left: var(--s4); }
+
+.convo__cost {
+  display: flex;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.turn__empty { color: var(--muted); font-style: italic; }
+
+/* ─────────────────────────────────────────────────────────────
+   Settings — an index of what can be configured. Readouts, not controls:
+   the command that changes a thing is named, and lives in the palette.
+   ───────────────────────────────────────────────────────────── */
+
+.settings { display: flex; flex-direction: column; gap: var(--s10); }
+
+.settings__how {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-top: var(--s2);
+}

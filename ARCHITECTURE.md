@@ -332,6 +332,314 @@ into a second store here.
 
 ---
 
+### Decided 2026-08-26 - reading Hermes' state back, so the interface can show what she holds
+
+**The decision:** Isabella may **read** `~/.hermes-isabella/state.db` and
+`~/.hermes-isabella/memories/*.md` directly, read-only, through exactly one module -
+`core/hermes/state.py`. She may not write to either, ever.
+
+**Why it was needed.** Three screens had no source otherwise:
+
+- the **chat log**, which is the transcript. Isabella stores no message content by design
+  (above), so the only copy is Hermes'. Without this the interface could show the current
+  browser session and nothing before it.
+- the **brain on `home`**, which draws what she holds as a graph.
+
+(A third reader was built on the same day and removed: a `log` view over `logs/*.log`. See
+below - logs are terminals.)
+
+**Why it is not a second store.** Nothing is copied here. Every one of these reads happens
+at request time and is discarded with the response - the same shape as reading a delivered
+briefing back off disk, decided above. The prime directive forbids Isabella *owning* memory
+or transcripts; it does not forbid her *showing* Hermes'. The line is writing, and the
+connection is opened `mode=ro` so a stray write is an error from SQLite rather than a
+corrupted agent.
+
+**The cost, stated.** This is the second module coupled to Hermes' internals, and the
+tighter of the two: `client.py` couples to an HTTP API, this couples to a **schema**.
+Upstream can move it. Every column is named explicitly rather than `SELECT *`, so a
+removed column fails on one query with a legible message instead of silently shifting a
+tuple index, and `tests/test_mind.py` carries a cut-down copy of the schema so the break
+lands in a test rather than in the view.
+
+---
+
+### Decided 2026-08-26 - what the brain on `home` is made of, since there is no memory graph
+
+Selene's home screen is a HUD with a brain at its centre and the brain is her memories.
+Isabella has no memory table and must not have one, and Hermes' gateway exposes no memory
+endpoint - so a faithful port had nothing to draw.
+
+**What it draws instead**, all of it real and all of it on disk in `HERMES_HOME`:
+
+| kind | what it is | where it comes from |
+|---|---|---|
+| `memory` | a curated entry she has kept | `memories/MEMORY.md`, `USER.md` |
+| `session` | one conversation | `state.db` sessions |
+| `message` | one thing said in it | `state.db` messages |
+
+The geometry is Selene's, unchanged: memories take the stem and the deep structures (the
+frame everything hangs off), sessions spread over the cortex, and a message sits beside the
+session it belongs to. Only the names changed - `core`/`entity`/`atomic` became
+`memory`/`session`/`message`.
+
+**Three rules the graph is held to:**
+
+1. **Nothing is invented.** A memory's importance is 0-10 *where the entry records one* and
+   `null` where it does not. Hermes' memory format has no importance field, so this is an
+   `[importance: N]` tag Isabella **reads and never writes**; an entry without one is
+   unrated, is drawn hollow, and says "unrated" rather than "0/10". A default of 5 would be
+   Isabella asserting a judgement about Owen's life that nobody made - the same rule
+   `core/body.py` follows for an unlogged weight.
+2. **Every radius is a real count** - importance for a memory, message count for a session,
+   tokens for a message, normalised server-side into `size`.
+3. **Violet is what is LIVE, and only that.** The lit nodes are the session being spoken in
+   and the messages in it, which genuinely are the context of her next turn. The three kinds
+   are told apart by **value** - silver, grey, faint - not by hue, because a second colour
+   here would say "this is happening" about a conversation from Tuesday.
+
+**Known thinness:** `memory.memory_enabled` is `false` on her instance today, so the memory
+tier is empty and the graph is sessions and messages only. The view says so in words rather
+than letting an absent third of the volume pass unremarked. Turning it on is a Hermes config
+change with its own blast radius - it adds the `memory` toolset to whichever platforms are
+not explicitly `[]` - and is not made here.
+
+---
+
+### Decided 2026-08-26 - reading a delivered briefing back off Hermes' disk
+
+`deliver: local` writes each cron run to
+`~/.hermes-isabella/cron/output/<job_id>/<local timestamp>.md`. That file is the **only**
+place the text of a delivered briefing exists on this machine outside her transcripts: the
+jobs API carries an execution's status and nothing of its output - `latest_execution` is
+`{status, timestamps, error}` - and the dashboard's `/api/cron/jobs/{id}/runs` is not
+mounted on the API-server surface.
+
+So the web UI had three options, and two of them were wrong:
+
+| Option | Verdict |
+|---|---|
+| Store the text in `runs` when Isabella sees it | **No.** That is a second message store, which the section above exists to forbid |
+| Ask upstream for an output endpoint, wait | Right long-term, blocking now |
+| Read Hermes' output directory at request time, keep nothing | **Chosen** |
+
+It is the first coupling to Hermes that is a *filesystem* one rather than HTTP, so it lives
+in `core/hermes/outbox.py` for the same reason the client does: when upstream moves, one
+module changes. The rule in `CLAUDE.md` is unchanged in spirit - **`core/hermes/` is the
+only module that touches Hermes**, by any means.
+
+Two properties this keeps: nothing is cached, so Isabella's database still holds no message
+content; and a run with no file is reported as *having no briefing* rather than as an error,
+because a failed run that never got as far as speaking is a normal thing to look at.
+
+A run record and an output file are joined **on time** - the file is named for the second
+the job finished, and neither side carries the other's id. The tolerance is 120s. If a
+trigger is ever allowed to run more often than that, this join needs an id instead.
+
+---
+
+### Decided 2026-08-26 - every view has an address
+
+The interface lived entirely at `/`. Views were state, so a reload put you back on home no
+matter what you were reading, nothing could be linked or bookmarked, and the back button did
+nothing.
+
+**The routes:**
+
+| path | what |
+|---|---|
+| `/` | home - the brain, and her latest reply |
+| `/chat` | the transcript |
+| `/briefings` | the run ledger |
+| `/triggers` | what fires, when, and whether it is paused |
+| `/body` | Owen's body log |
+| `/health` | hers - model, gateway, persona, storage |
+| `/settings` | an index of what can be configured |
+| `/settings/google` | the Google grant |
+
+`google` moved under `settings` because that is what it is. `body` and `health` stayed at the
+top level because they are *readings*, not settings - the distinction is worth keeping in the
+address bar rather than lumping everything configurable-looking together.
+
+**`ROUTES` in `App.tsx` is the single table.** The palette builds its view commands from it,
+the number keys index into it, and the renderer switches on it. A path can only exist in one
+place, so adding a view is one line and there is nothing for two lists to disagree about.
+
+**No router dependency.** `web/src/router.ts` is about forty lines: read `location.pathname`,
+`pushState` without a reload, listen for `popstate`. Eight static paths, no params, no
+loaders, no nesting past one level - `react-router` would be a dependency bought for nothing,
+which is the check CLAUDE.md's dependency rule asks for.
+
+**An unknown address says so** and names the ones that exist. Redirecting to home would be
+tidier and would hide the typo that got you there - the same reasoning as everywhere else in
+this project that an absence is drawn rather than filled.
+
+**Home is never replaced.** Picking a view from home opens it in a **window** of its own.
+Home is the screen that stays up - the brain, her latest reply - and navigating over the top
+of it to read the trigger list was the wrong trade.
+
+A window rather than a tab, because a tab is only unhidden while it is the front tab: put
+`chat` in a tab and home is behind a tab strip, which is the same complaint in a smaller
+form. Mechanically this is `window.open(url, name, features)` - passing any features is what
+makes the browser spend a window instead of a tab, which is why `chrome()` must never return
+an empty string. The new window is offset from the current one rather than centred: a window
+landing exactly on top of home reads as home having been replaced.
+
+**The feature string is a request, not an instruction**, and that is not a detail. When home
+is maximised or full-screen the browser hands the new window the same shape - so it opens
+covering home completely, which is precisely what spending a window on it was supposed to
+avoid. The size is therefore applied twice: once from the opener, and once by the new window
+itself on first load, which is the reliable half because it runs in that window's own context
+after it exists. The self-correction fires only when the window came out covering the screen,
+and only once per window, so a window someone maximised deliberately is never shrunk back.
+
+macOS native full-screen is the case that cannot be fixed: the browser opens the new window
+in its own Space and no script can pull it back. It is still resized, so it is an ordinary
+window once you leave that Space.
+
+The window is named, so picking `chat` twice reuses the chat window instead of opening a
+second; from a spawned window everything navigates in place, because it is already not home;
+and from a spawned window `home` - or `Q` - *closes* it, because a second copy of home in a
+window called "chat" is worse than no window at all. `Q` exists because every other way out
+of a view is a keystroke, and a window that has to be closed with the mouse would be the one
+place this interface makes you reach for the trackpad. A deep link typed by hand has no opener and
+behaves like an ordinary page.
+
+This is the part no router ships, and it is the reason `router.ts` is hand-written rather
+than `react-router` with a rule bolted on beside it.
+
+**The constraint it introduces:** a window is a separate copy of the app, with its own chat
+state and its own session id. So anything that has to stay with this window's memory
+navigates *in place* - asking her something from `/triggers` moves to `/chat` in the same
+window rather than spending a window the answer would not be in. And `open()` has to stay
+synchronous from the keypress that called it, or the browser treats it as an unsolicited
+popup and blocks it.
+
+**What did not change:** there are still no links. `/settings` lists Google as a readout with
+the command that opens it, not as something to click. The palette is still how you go
+somewhere; the addresses are so you can come *back* to somewhere.
+
+---
+
+### Decided 2026-08-26 - one input, and it is the palette
+
+Home shipped with a chat box under the core. It came off the same day.
+
+**Why.** The interface then had two inputs on one screen - the palette (`K`) and the box -
+and nothing about either announced which was which. A new pair of eyes had to work out the
+difference before typing anything, and the honest answer is that there is no difference
+worth learning: both take a string and do something with it.
+
+**What it is now.** `K` is the only input. The palette matches the string against the live
+command list; if nothing matches, the string is a sentence and is said to her. Commands win
+the tie - typing `body` shows the body rather than asking her about bodies - and the ask row
+appears only when the match set is empty, so it never competes with a command.
+
+**Why this is the right shape rather than a tidy one.** It is the M6 shape. A command router
+does not care whether the string arrived from a keyboard or a microphone, and "say the thing
+you want" is already how voice will work - there is no second microphone for commands. The
+palette was always going to be that router; this makes it the router for everything now
+rather than at M6.
+
+**The one thing that had to be visible.** The ask row is drawn in sans, in a list that is
+otherwise mono. That is the design system's split - two faces, by who is speaking - and it
+is doing the work the second box was doing badly: saying *this one is a sentence, the rest
+are things the machine will do*. It also carries the violet, because pressing Enter on it
+starts her thinking, which is exactly what the colour is reserved for.
+
+---
+
+### Decided 2026-08-26 - logs are terminals, and there is no log view
+
+**Built, then removed on the same day.** A `log` view read `HERMES_HOME/logs/*.log` through
+`core/hermes/logs.py` and `GET /log`, with the level as a floor and the counts beside it. It
+worked. It was still wrong.
+
+**Why it went.** Her logs were already readable - `open logs`, `open errors`, `open gateway`
+open Terminal.app on them, live. A second reader in the browser meant two places to look at
+one file, with the browser one strictly worse at the thing a log is for: `tail -f` is a
+terminal idiom, and a scrolling log wants a terminal.
+
+**What replaced it:** colour, in the terminal. `core/logcolour.awk` is piped onto the three
+log targets. Red is an error, yellow a warning, everything else dim; a traceback's own lines
+carry no level and inherit the colour of the line above, so a stack trace reads as part of
+the error it belongs to. Three steps and no more - the question being asked of a scrolling
+log is *is anything wrong*, and a rainbow answers it worse than three colours do.
+
+**Closing them, added 2026-08-26.** `close logs`, and `close terminals` for all of them.
+Two things make it safe to have at all: every tab she opens is stamped `Isabella · <target>`
+as its custom title, and that title is the only thing the close path matches on - Owen's own
+Terminal windows are never candidates. And the kill is bounded to the commands this module
+itself runs (`tail`, `awk`, `cat`, `head`, `ls`), never the shell, so a process he started in
+a window of hers is not hers to end. That kill is the single non-read-only thing in
+`desktop.py` and is called out in its own docstring.
+
+**Terminal refuses to close a busy window, silently.** `close window id N` returns success
+and the window stays while a job is running in it - there is no error, because what Terminal
+wants to do is show its "terminate running processes?" sheet and it cannot show that to a
+script. So closing is three steps in order: kill what is running, wait for `busy` to go
+false, then close. If something is still running after the kill it is something Owen started
+in a window of hers, and that window is reported and left alone rather than fought over.
+
+This was got wrong first. The original implementation concluded that `close` did not work at
+all and hid windows instead. The mistake was the measurement: `id of every window` keeps
+returning ids for windows that have already closed, so a successful close looked like a
+no-op. `_LIST` enumerates windows that still have tabs, which is the reading that matches
+what is on screen. See HISTORY.
+
+The window is closed for real, so `open logs` opens a fresh one; when a window for that
+target is already up it is brought to the front and its command restarted if it had stopped.
+
+**The constraint it had to keep.** **The constraint it had to keep.** `core/desktop.py` executes on the host, and its whole
+security argument is that the commands are constants. The awk program is a git-versioned
+file next to `desktop.py` and its path is derived from the module's own location - not from
+a request, a prompt, or a model's output. It lives in a file rather than inline because the
+command ends up inside an AppleScript string, and an awk program full of quotes and
+backslashes through that escaping is a bug waiting to happen.
+`tests/test_desktop.py` asserts every stage of every pipeline is one of `tail`, `cat`,
+`awk`, `head` - a pipeline is only as read-only as its last stage.
+
+**And `chat log` became `chat`.** It is the transcript, not a log; naming it "chat log" put
+it in the same sentence as the agent log, which is the confusion this whole decision is
+about. It stays a view because it is prose she wrote, not machine output.
+
+---
+
+## Decided 2026-08-26 - opening a terminal on the host
+
+**This is the only path in Isabella that executes anything**, so it is written down
+before it is used rather than after.
+
+`POST /desktop/open/{name}` opens Terminal.app on one of four named targets - her agent
+log, her error log, her gateway log, or the most recent briefing as Hermes wrote it. Owen
+asked for it in the plainest possible terms: *"open logs, which should start a terminal
+that listens to our session logs."*
+
+**Why this does not reopen the floor.** [[PERMISSIONS]] P0 removes `terminal` and
+`code_execution` from every Hermes platform - *capability removed, not sandboxed* - and
+Docker is not installed, so `TERMINAL_ENV=docker` is not an available fallback. None of
+that changes:
+
+| | |
+|---|---|
+| **The commands are constants** | A caller sends a *name*. `core/desktop.py` looks it up in a table and runs the command written there. Nothing composes a command from a request, a prompt, or a model's output; an unknown name is a 404, never a passthrough |
+| **Every target is read-only** | `tail` and `cat`. A test asserts this over the whole table, so adding a target that writes fails the suite |
+| **It never touches Hermes** | This is Isabella's own process. Her Hermes instance still has no terminal and no code execution, and the 07:00 path still has `platform_toolsets.cron: []` |
+| **The model cannot call it** | It is an endpoint Owen drives from the palette. Selene's own `tools.ts` draws the same line: *"wiring a write to a regex with no confirmation step would be the Awareness-and-Sensing argument made backwards"* |
+
+**What it costs, stated honestly.** It is still execution on the host, and the gate today
+is that the command is a constant rather than that a policy allowed it. When `permit()`
+lands ([[PERMISSIONS]] P1) this becomes a `Desktop(open:*)` decision with a real subject.
+It is also **macOS-only** - AppleScript into Terminal.app - which [[ROADMAP]] M5 has to
+account for the same way it accounts for the iMessage bridge. It degrades to an explicit
+"not available on this host" rather than an exception.
+
+**What would change the answer.** A target whose command is built from a parameter, a
+target that writes, or anything that lets Hermes reach this endpoint. Any of those is a
+different decision and needs its own entry here.
+
+---
+
 ## Portability
 
 Isabella must run wherever it's convenient: this MacBook now; a Mac Mini, the old
@@ -381,9 +689,33 @@ What makes it a real decision rather than a chore:
   "Connect Google" button and a redirect endpoint. Building that now would be M3 work done
   early, which is exactly what the sequencing rule forbids.
 
-**Deferred deliberately, 2026-08-26.** Until it is resolved the briefing runs and reports
-the gap honestly - which is the correct behaviour, not a broken state. When it is picked up:
-decide the scopes first, then the flow.
+**Resolved 2026-08-26 - the flow lives in the web UI.** Decided in the order this section
+asked for: scopes first, then the flow.
+
+**Scopes: `gmail.readonly` and `calendar.readonly`, and nothing else.** She can read the day
+and the unread mail; she cannot send, delete, or modify. This build of the skill pins exactly
+those two and offers no flag to widen them, so the ceiling is enforced by the thing that
+requests it rather than by a note in a document.
+
+**The flow: Isabella drives Hermes' own `setup.py`, from a panel in `web/`.** Get the consent
+link, approve it in a browser under Owen's own Google login, paste the redirected URL back
+once. `core/hermes/google_auth.py` runs the script as a subprocess with `HERMES_HOME` set
+explicitly to hers - the default is Selene's, and a grant written there would be useless to
+Isabella and sitting in another agent's directory.
+
+Two things this deliberately did **not** do:
+
+- **No OAuth implementation of her own.** The skill already owns PKCE, the pending session,
+  the exchange, refresh and revocation. Duplicating credential handling is the worst possible
+  application of the prime directive's exception.
+- **No token in the browser.** This is the correction worth keeping: Firebase and Supabase put
+  the session in a cookie, and a cookie is unreachable at 07:00, when the briefing fires with
+  no browser open and nobody logged in. The grant is a refresh token on disk in her
+  `HERMES_HOME`, which is the only form of it she can use unattended.
+
+**What is still true from the paragraphs above:** a refresh token is a standing grant sitting
+next to a process that acts unprompted. So revocation is a first-class control in the same
+panel - one button, not a remembered terminal command.
 
 ## Open decision - remote access
 

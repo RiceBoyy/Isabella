@@ -430,7 +430,15 @@ one: it tells you what she actually does before you start forbidding things.
 6. **How is a device recognised?** A cookie is per-browser, not per-device, and clearing it
    makes a trusted phone `unknown`. Blocks P6.
 
-7. **Selene shares this machine.** Isabella's L1 ceiling protects Isabella's instance.
+7. **Isabella can now open a terminal, and `permit()` does not exist yet.**
+   `POST /desktop/open/{name}` runs `tail`/`cat` in Terminal.app on the host - the first
+   executing path in this repo. It is narrow by construction (the commands are constants,
+   every target is read-only, and it never reaches Hermes, so the L1 floor is untouched),
+   but the *gate* today is code review rather than policy. It wants to be `Desktop(open:*)`
+   at P1, and `trigger` must never be a subject that can reach it. See
+   [[ARCHITECTURE]] §Opening a terminal.
+
+8. **Selene shares this machine.** Isabella's L1 ceiling protects Isabella's instance.
    It does nothing about Selene, who has her own toolsets and her own shell access to the
    same filesystem. Two AIs on one Mac is a threat model neither document has addressed.
 

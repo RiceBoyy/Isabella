@@ -108,10 +108,11 @@ authentication required for google-workspace... You're forgetting the google-wor
 needs authorising."* That is the correct briefing for a morning with no credentials: she
 reported the blind spot rather than inventing a day.
 
-Resolved since: **timezone** is `Europe/Copenhagen` on both sides, and **execution** is
-settled by pre-fetching rather than granting toolsets (`platform_toolsets.cron: []`).
-Outstanding and deliberately deferred: **Google authorisation** (a consent flow, not a
-file - see `ARCHITECTURE.md` §Open decision) and **delivery**, held at `local` by decision.
+Resolved since: **timezone** is `Europe/Copenhagen` on both sides, **execution** is
+settled by pre-fetching rather than granting toolsets (`platform_toolsets.cron: []`), and
+**Google authorisation** now has a flow - a Connect panel in the web UI, read-only scopes,
+token written server-side (`ARCHITECTURE.md` §Open decision, resolved). The one thing still
+outstanding is **delivery**, held at `local` by decision.
 The done-when criteria are unchanged and none is met yet - nobody has woken up to a
 briefing. Until the token exists she runs every weekday and reports the blind spot, which
 is the correct behaviour rather than a broken one.
@@ -123,18 +124,45 @@ fires. Three things still stand between this and a briefing, none of them code:
 
 | | |
 |---|---|
-| Google OAuth | **Deferred 2026-08-26.** Not a missing file - a flow: pick account and scopes, consent in a browser, redirect, exchange, store the refresh token. `setup.py` does this from a terminal and is likely enough for an audience of one; a "Connect Google" button is M3 work. Decide the *scopes* first - they become her real ceiling for Google. See `ARCHITECTURE.md` §Open decision |
+| Google OAuth | **Resolved 2026-08-26** - a Connect Google panel in `web/` drives the skill's `setup.py`; scopes decided as read-only Gmail + Calendar. The mechanism exists; the grant is not given until Owen clicks through Google's consent screen. Superseded text follows: **Deferred 2026-08-26.** Not a missing file - a flow: pick account and scopes, consent in a browser, redirect, exchange, store the refresh token. `setup.py` does this from a terminal and is likely enough for an audience of one; a "Connect Google" button is M3 work. Decide the *scopes* first - they become her real ceiling for Google. See `ARCHITECTURE.md` §Open decision |
 | ~~Execution for the cron path~~ | **Resolved 2026-08-26** by pre-fetching: a script gathers the data, the model gets no tools at all |
 | ~~Timezone~~ | **Resolved 2026-08-26**: `Europe/Copenhagen`, set explicitly on both sides |
 
 Telegram is unconfigured, so delivery is `local` - the fourth thing, and the one that
-decides whether a briefing reaches him at all. The job is **paused** meanwhile.
+decides whether a briefing reaches him at all. **Correction 2026-08-26:** an earlier version
+of this line said the job was paused. It is not, and has not been - it is active and fires
+07:00 on weekdays. `hermes cron list` hides paused jobs rather than showing them, which is
+how the wrong belief survived; `--all` is the flag that tells the truth.
 
 ---
 
-## M3 - Web UI
+## M3 - Web UI ⭐
 
 **Goal:** A place to talk to her and see what she's been doing.
+
+**Started 2026-08-26, out of order, deliberately.** M2's done-when is *not* met - nobody has
+woken up to a briefing, and delivery is still `local`. Owen chose to build the reading
+surface first, with the tradeoff stated: a page you have to visit is not a briefing that
+arrives. What that bought is that the briefing is no longer written into a file nobody
+opens.
+
+Landed in the first slice: `web/` (React + Vite + pnpm), Briefings with the real text read
+back from Hermes' cron output, Triggers with pause/resume/run-now verified against the live
+gateway, and Chat. Second slice: the Selene design system, a Connect Google panel, a Body
+view of her own runtime, `open logs` into Terminal.app - and **no buttons**. Every action is
+a palette command (`K`), views are `1`-`5`.
+
+**That last one is aimed at M6.** Voice control was asked for; voice itself is M6 and she has
+no STT or TTS. The step available now is the layer underneath - a command router - so speech
+later feeds the same list instead of needing a second control surface. Buttons would have
+been the thing to throw away.
+
+**The HUD is the destination, not the next step**, on the authority of the design note that
+proposes it: *a HUD with no voice is a wall of telemetry with nothing to talk to.* Its panels
+also want data she does not have. The register landed; the instrument panel waits for M6.
+
+Still open from the build list below: **SSE streaming** - which matters at 8-90s per reply -
+and the run-now path being visible while it runs.
 
 **Build**
 - `web/` - React + Vite, `pnpm`. Talks only to Isabella's API; never holds the Hermes key.
@@ -189,6 +217,12 @@ from it.
 Voice and additional connectors (Slack, iMessage on macOS, email) come from Hermes.
 This milestone is configuration and persona adaptation per surface - she should be terse
 out loud and fuller in writing - not new infrastructure.
+
+**The UI is already built for this.** M3 removed every button in favour of a command
+palette, so voice arrives as a new *front end* on an existing command list rather than as a
+parallel control surface. When it lands, the HUD layout from
+`vault/Projects/selene/Design` becomes buildable for the first time - it is voice-first by
+design, and its own note says so.
 
 **Done when** I've had a useful spoken conversation with her.
 

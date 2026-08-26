@@ -1,0 +1,8 @@
+{
+  "default": "muscle",
+  "layers": [
+    { "id": "skin",     "label": "SKIN",     "file": "skin.json" },
+    { "id": "muscle",   "label": "MUSCLE",   "file": "muscle.json" },
+    { "id": "skeleton", "label": "SKELETON", "file": "skeleton.json" }
+  ]
+}

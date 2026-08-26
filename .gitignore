@@ -34,3 +34,5 @@ web/dist/
 .idea/
 .vscode/
 *.swp
+
+.obsidian
